@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 
 
@@ -89,27 +90,31 @@ class Database:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
-        self.conn = sqlite3.connect(path)
+        self._lock = threading.RLock()
+        self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._init()
 
     def _init(self) -> None:
-        self.conn.executescript(SCHEMA)
-        for key, value in DEFAULT_SETTINGS.items():
+        with self._lock:
+            self.conn.executescript(SCHEMA)
+            for key, value in DEFAULT_SETTINGS.items():
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)",
+                    (key, value),
+                )
             self.conn.execute(
-                "INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)",
-                (key, value),
+                "INSERT OR IGNORE INTO projects(id, name, root_path) VALUES(1, ?, ?)",
+                ("QuakeForge", str(self.path.parent.parent)),
             )
-        self.conn.execute(
-            "INSERT OR IGNORE INTO projects(id, name, root_path) VALUES(1, ?, ?)",
-            ("QuakeForge", str(self.path.parent.parent)),
-        )
-        self.conn.commit()
+            self.conn.commit()
 
     def execute(self, sql: str, params: tuple = ()):
-        cur = self.conn.execute(sql, params)
-        self.conn.commit()
-        return cur
+        with self._lock:
+            cur = self.conn.execute(sql, params)
+            self.conn.commit()
+            return cur
 
     def query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
-        return list(self.conn.execute(sql, params))
+        with self._lock:
+            return list(self.conn.execute(sql, params))
