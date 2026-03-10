@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QFileSystemModel,
     QLabel,
@@ -87,7 +87,7 @@ class MainWindow(QMainWindow):
         self.build_tree.clicked.connect(self._build_clicked)
 
         left_split = QSplitter()
-        left_split.setOrientation(2)
+        left_split.setOrientation(Qt.Orientation.Vertical)
         left_split.addWidget(self.source_tree)
         left_split.addWidget(self.build_tree)
 
