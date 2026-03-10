@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QTabWidget,
@@ -34,6 +35,8 @@ class SettingsDialog(QDialog):
 
         save = QPushButton("Save")
         save.clicked.connect(self._save)
+        reset_btn = QPushButton("Reset / Clean")
+        reset_btn.clicked.connect(self._reset_clean)
         export_btn = QPushButton("Export JSON")
         export_btn.clicked.connect(self._export)
         import_btn = QPushButton("Import JSON")
@@ -42,6 +45,7 @@ class SettingsDialog(QDialog):
         row = QHBoxLayout()
         row.addWidget(import_btn)
         row.addWidget(export_btn)
+        row.addWidget(reset_btn)
         row.addStretch(1)
         row.addWidget(save)
 
@@ -147,6 +151,20 @@ class SettingsDialog(QDialog):
         self.settings.set("pack_after_build", "1" if self.pack_after_build.isChecked() else "0")
         self.settings.set("deploy_after_build", "1" if self.deploy_after_build.isChecked() else "0")
         self.settings.set("map_build_mode", self.map_mode.currentText())
+        self.accept()
+
+    def _reset_clean(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Reset / Clean",
+            "This will rebuild the database, reset all settings and paths to defaults, "
+            "and remove project src/build/deploy folders. Continue?",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        self.settings.reset_workspace()
+        QMessageBox.information(self, "Reset complete", "Workspace has been reset to a clean state.")
         self.accept()
 
     def _export(self) -> None:
