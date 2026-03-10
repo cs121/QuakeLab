@@ -2,6 +2,76 @@
 
 QuakeForge ist eine modulare Python-Desktop-Anwendung (PySide6) für Quake-Modding-Workflows mit Source-Watching, Change-Journal, Build-Queue, Toolchain-Integration und PAK-Rebuild.
 
+## Voraussetzungen
+
+- Python **3.11+**
+- Betriebssystem: Linux, macOS oder Windows
+- Für EXE-Build: Windows + PyInstaller
+
+## Benötigte Python-Libraries
+
+Pflichtabhängigkeiten:
+
+- `PySide6` (GUI, Multimedia, Datei-Modelle)
+
+Für Entwicklung und Tests empfohlen:
+
+- `pytest`
+- `pyinstaller` (nur für EXE-Erzeugung)
+
+Installation (Beispiel mit virtueller Umgebung):
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install PySide6 pytest pyinstaller
+```
+
+## Anwendung starten
+
+Projektwurzel öffnen und starten:
+
+```bash
+python -m app.main
+```
+
+Beim ersten Start werden automatisch Standardordner (`src`, `build`) und die SQLite-Datenbank unter `.quakeforge/workbench.db` angelegt.
+
+## Bedienung (Kurz-Anleitung)
+
+1. **Starten** mit `python -m app.main`.
+2. Über **Project → Settings** die Pfade setzen:
+   - Source Root
+   - Build Root
+   - Deploy Root
+   - Pak Output
+3. In **Project → Settings** die Toolchain konfigurieren:
+   - QC Compiler (Executable + optionale Argumente)
+   - QBSP / VIS / LIGHT (optional)
+4. Dateien im `src/`-Ordner bearbeiten/ablegen.
+5. Das Tool erkennt Änderungen automatisch und legt Build-Aktionen in der Queue an.
+6. Unten rechts **Flush Build Queue** klicken (oder Auto-Flush nutzen), um die Aktionen abzuarbeiten.
+7. Ergebnisse prüfen:
+   - **Build Queue**-Tab für Status
+   - **Logs**-Tab für Ausgaben
+   - **Errors**-Tab bei Fehlern
+   - **Preview** rechts für selektierte Dateien
+
+## EXE erstellen (Windows)
+
+Im Hauptordner liegt das Script `build_exe.bat`.
+
+Ausführen in einer aktiven Python-Umgebung:
+
+```bat
+build_exe.bat
+```
+
+Ergebnis:
+
+- EXE und Laufzeitdateien unter `dist\QuakeForgeWorkbench\`
+- Startdatei: `dist\QuakeForgeWorkbench\QuakeForgeWorkbench.exe`
+
 ## Features (V1)
 
 - Modulares GUI-Layout mit:
@@ -53,38 +123,6 @@ tests/
 - **Core-Layer**: Domänenmodelle, Regeln, Services ohne GUI-Logik.
 - **Infrastructure-Layer**: SQLite, Watcher, Hashing, Prozessausführung, PAK-Implementierung.
 - **UI-Layer**: MainWindow, Dialoge, Preview-Widgets.
-
-## Installation
-
-Voraussetzungen:
-
-- Python 3.11+
-- PySide6
-
-Installation:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install PySide6
-```
-
-## Start
-
-```bash
-python -m app.main
-```
-
-Beim ersten Start werden Default-Ordner (`src`, `build`) und `.quakeforge/workbench.db` initialisiert.
-
-## Toolchain-Setup
-
-`Project -> Settings` öffnen und eintragen:
-
-- QC Compiler: Executable + Args
-- QBSP/VIS/LIGHT: Executables (+ optional Args)
-- Pfade: Source/Build/Deploy/Pak
-- Build-Modus: `fast`, `full`, `manual`
 
 ## Typische Projektstruktur
 
