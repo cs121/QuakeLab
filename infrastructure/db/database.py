@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS file_state (
 
 
 DEFAULT_SETTINGS = {
-    "project_name": "QuakeForge",
+    "project_name": "QuakeLab",
     "source_root": "src",
     "build_root": "build",
     "deploy_root": "deploy",
@@ -105,7 +105,7 @@ class Database:
                 )
             self.conn.execute(
                 "INSERT OR IGNORE INTO projects(id, name, root_path) VALUES(1, ?, ?)",
-                ("QuakeForge", str(self.path.parent.parent)),
+                ("QuakeLab", str(self.path.parent.parent)),
             )
             self.conn.commit()
 

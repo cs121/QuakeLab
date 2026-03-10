@@ -66,7 +66,7 @@ class PollingWatchService:
             if not path.is_file():
                 continue
             rel = path.relative_to(source_root).as_posix()
-            if rel.startswith(".quakeforge/"):
+            if rel.startswith(".quakelab/"):
                 continue
             stat = path.stat()
             digest = sha1_file(path)
@@ -99,7 +99,7 @@ class PollingWatchService:
 
         change = FileChange(
             timestamp=datetime.utcnow(),
-            project=self.settings.get("project_name", "QuakeForge"),
+            project=self.settings.get("project_name", "QuakeLab"),
             relative_path=rel,
             absolute_path=str(absolute),
             change_type=change_type,

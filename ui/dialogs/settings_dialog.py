@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLineEdit,
@@ -14,7 +15,6 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QVBoxLayout,
     QWidget,
-    QFileDialog,
 )
 
 from core.services.settings_service import SettingsService
@@ -24,7 +24,7 @@ class SettingsDialog(QDialog):
     def __init__(self, settings: SettingsService, parent=None) -> None:
         super().__init__(parent)
         self.settings = settings
-        self.setWindowTitle("QuakeForge Settings")
+        self.setWindowTitle("QuakeLab Settings")
         self.resize(800, 500)
 
         tabs = QTabWidget()
@@ -49,6 +49,29 @@ class SettingsDialog(QDialog):
         layout.addWidget(tabs)
         layout.addLayout(row)
 
+    def _with_browse_button(self, edit: QLineEdit, title: str, *, directory: bool = False) -> QWidget:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(edit)
+        browse = QPushButton("Browse…")
+        if directory:
+            browse.clicked.connect(lambda: self._select_directory(edit, title))
+        else:
+            browse.clicked.connect(lambda: self._select_file(edit, title))
+        layout.addWidget(browse)
+        return row
+
+    def _select_directory(self, edit: QLineEdit, title: str) -> None:
+        selected = QFileDialog.getExistingDirectory(self, title, edit.text() or str(Path.cwd()))
+        if selected:
+            edit.setText(selected)
+
+    def _select_file(self, edit: QLineEdit, title: str) -> None:
+        selected, _ = QFileDialog.getOpenFileName(self, title, edit.text() or str(Path.cwd()))
+        if selected:
+            edit.setText(selected)
+
     def _project_tab(self) -> QWidget:
         w = QWidget()
         form = QFormLayout(w)
@@ -57,11 +80,11 @@ class SettingsDialog(QDialog):
         self.deploy_root = QLineEdit(self.settings.get("deploy_root", "deploy"))
         self.pak_output = QLineEdit(self.settings.get("pak_output_path", "build/pak0.pak"))
         self.engine_exe = QLineEdit(self.settings.get("engine_exe", ""))
-        form.addRow("Source Root", self.source_root)
-        form.addRow("Build Root", self.build_root)
-        form.addRow("Deploy Root", self.deploy_root)
-        form.addRow("Pak Output", self.pak_output)
-        form.addRow("Engine EXE", self.engine_exe)
+        form.addRow("Source Root", self._with_browse_button(self.source_root, "Select Source Root", directory=True))
+        form.addRow("Build Root", self._with_browse_button(self.build_root, "Select Build Root", directory=True))
+        form.addRow("Deploy Root", self._with_browse_button(self.deploy_root, "Select Deploy Root", directory=True))
+        form.addRow("Pak Output", self._with_browse_button(self.pak_output, "Select Pak Output File"))
+        form.addRow("Engine EXE", self._with_browse_button(self.engine_exe, "Select Game Executable"))
         return w
 
     def _toolchain_tab(self) -> QWidget:
@@ -72,11 +95,11 @@ class SettingsDialog(QDialog):
         self.qbsp_exe = QLineEdit(self.settings.get("qbsp_executable", ""))
         self.vis_exe = QLineEdit(self.settings.get("vis_executable", ""))
         self.light_exe = QLineEdit(self.settings.get("light_executable", ""))
-        form.addRow("QC Compiler", self.qc_exe)
+        form.addRow("QC Compiler", self._with_browse_button(self.qc_exe, "Select QC Compiler"))
         form.addRow("QC Args", self.qc_args)
-        form.addRow("QBSP", self.qbsp_exe)
-        form.addRow("VIS", self.vis_exe)
-        form.addRow("LIGHT", self.light_exe)
+        form.addRow("QBSP", self._with_browse_button(self.qbsp_exe, "Select QBSP Executable"))
+        form.addRow("VIS", self._with_browse_button(self.vis_exe, "Select VIS Executable"))
+        form.addRow("LIGHT", self._with_browse_button(self.light_exe, "Select LIGHT Executable"))
         return w
 
     def _build_tab(self) -> QWidget:
@@ -127,7 +150,7 @@ class SettingsDialog(QDialog):
         self.accept()
 
     def _export(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "Export Settings", "quakeforge-settings.json", "JSON (*.json)")
+        path, _ = QFileDialog.getSaveFileName(self, "Export Settings", "quakelab-settings.json", "JSON (*.json)")
         if path:
             self.settings.export_json(Path(path))
 
