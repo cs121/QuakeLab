@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QFileSystemModel,
+    QFrame,
     QLabel,
     QMainWindow,
     QMenu,
@@ -74,6 +75,9 @@ class MainWindow(QMainWindow):
 
         self.source_model = QFileSystemModel(self)
         self.source_model.setRootPath(str(source_root))
+        self.source_tree_title = QLabel("Source")
+        self.source_tree_info = QLabel("Displays source assets and editable files")
+        self.source_tree_info.setObjectName("paneInfoLabel")
         self.source_tree = QTreeView()
         self.source_tree.setModel(self.source_model)
         self.source_tree.setRootIndex(self.source_model.index(str(source_root)))
@@ -81,20 +85,43 @@ class MainWindow(QMainWindow):
 
         self.build_model = QFileSystemModel(self)
         self.build_model.setRootPath(str(build_root))
+        self.build_tree_title = QLabel("Build / PAK")
+        self.build_tree_info = QLabel("Displays build output, including generated PAK files")
+        self.build_tree_info.setObjectName("paneInfoLabel")
         self.build_tree = QTreeView()
         self.build_tree.setModel(self.build_model)
         self.build_tree.setRootIndex(self.build_model.index(str(build_root)))
         self.build_tree.clicked.connect(self._build_clicked)
 
+        source_panel = QWidget()
+        source_layout = QVBoxLayout(source_panel)
+        source_layout.setContentsMargins(0, 0, 0, 0)
+        source_layout.addWidget(self.source_tree_title)
+        source_layout.addWidget(self.source_tree_info)
+        source_layout.addWidget(self.source_tree)
+
+        build_panel = QWidget()
+        build_layout = QVBoxLayout(build_panel)
+        build_layout.setContentsMargins(0, 0, 0, 0)
+        build_layout.addWidget(self.build_tree_title)
+        build_layout.addWidget(self.build_tree_info)
+        build_layout.addWidget(self.build_tree)
+
         left_split = QSplitter()
         left_split.setOrientation(Qt.Orientation.Vertical)
-        left_split.addWidget(self.source_tree)
-        left_split.addWidget(self.build_tree)
+        left_split.addWidget(source_panel)
+        left_split.addWidget(build_panel)
 
         self.preview_container = QWidget()
         self.preview_layout = QVBoxLayout(self.preview_container)
-        self.preview_label = QLabel("Select a file for preview")
-        self.preview_layout.addWidget(self.preview_label)
+        self.preview_context = QLabel("Window info: select an item in Source or Build / PAK")
+        self.preview_context.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Sunken)
+        self.preview_layout.addWidget(self.preview_context)
+        self.preview_body = QWidget()
+        self.preview_body_layout = QVBoxLayout(self.preview_body)
+        self.preview_body_layout.setContentsMargins(0, 0, 0, 0)
+        self.preview_body_layout.addWidget(QLabel("Select a file for preview"))
+        self.preview_layout.addWidget(self.preview_body)
 
         top_split = QSplitter()
         top_split.addWidget(left_split)
@@ -147,23 +174,29 @@ class MainWindow(QMainWindow):
         self.flush_timer.start(minutes * 60 * 1000)
 
     def _set_preview_widget(self, widget: QWidget) -> None:
-        while self.preview_layout.count():
-            item = self.preview_layout.takeAt(0)
+        while self.preview_body_layout.count():
+            item = self.preview_body_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        self.preview_layout.addWidget(widget)
+        self.preview_body_layout.addWidget(widget)
 
     def _source_clicked(self, index) -> None:
         path = Path(self.source_model.filePath(index))
+        self._update_preview_context(path, "Source")
         if path.is_file():
             handler = self.preview.handler_for(path)
             self._set_preview_widget(handler.create_widget(path))
 
     def _build_clicked(self, index) -> None:
         path = Path(self.build_model.filePath(index))
+        self._update_preview_context(path, "Build / PAK")
         if path.is_file():
             handler = self.preview.handler_for(path)
             self._set_preview_widget(handler.create_widget(path))
+
+    def _update_preview_context(self, path: Path, pane_name: str) -> None:
+        item_type = "Folder" if path.is_dir() else ("PAK file" if path.suffix.lower() == ".pak" else "File")
+        self.preview_context.setText(f"Window: {pane_name} | Item: {item_type} | Path: {path.name}")
 
     def open_settings(self) -> None:
         dialog = SettingsDialog(self.settings, self)
