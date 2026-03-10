@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QFileSystemModel,
     QFrame,
@@ -31,8 +32,22 @@ from core.services.pack_service import PackService
 from core.services.preview_service import PreviewService
 from core.services.project_service import ProjectService
 from core.services.settings_service import SettingsService
+from infrastructure.archives.pak import PakArchive, PakError
 from infrastructure.filesystem.watcher import PollingWatchService
 from ui.dialogs.settings_dialog import SettingsDialog
+
+
+def build_pak_tree(paths: list[tuple[str, int]]) -> dict[str, dict]:
+    tree: dict[str, dict] = {}
+    for pak_path, size in paths:
+        parts = [part for part in pak_path.split("/") if part]
+        if not parts:
+            continue
+        node = tree
+        for folder in parts[:-1]:
+            node = node.setdefault(folder, {"_children": {}})["_children"]
+        node[parts[-1]] = {"_size": size}
+    return tree
 
 
 class MainWindow(QMainWindow):
@@ -60,6 +75,8 @@ class MainWindow(QMainWindow):
         self.watch = watch_service
         self.preview = preview_service
         self.logs = log_service
+        self.pak_archive = PakArchive()
+        self._showing_pak_contents = False
 
         self.setWindowTitle("QuakeLab Workbench V1")
         self.resize(1400, 900)
@@ -93,6 +110,10 @@ class MainWindow(QMainWindow):
         build_layout = QVBoxLayout(build_panel)
         build_layout.setContentsMargins(0, 0, 0, 0)
         build_layout.addWidget(self.build_tree_title)
+        self.back_to_build_button = QPushButton("Back to Build Folder")
+        self.back_to_build_button.clicked.connect(self._show_build_filesystem)
+        self.back_to_build_button.setVisible(False)
+        build_layout.addWidget(self.back_to_build_button)
         build_layout.addWidget(self.build_tree)
 
         left_split = QSplitter()
@@ -163,6 +184,10 @@ class MainWindow(QMainWindow):
         self.source_tree.setRootIndex(self.source_model.index(str(source_root)))
         self.build_model.setRootPath(str(build_root))
         self.build_tree.setRootIndex(self.build_model.index(str(build_root)))
+        self.build_tree.setModel(self.build_model)
+        self.build_tree_title.setText("Build / PAK")
+        self.back_to_build_button.setVisible(False)
+        self._showing_pak_contents = False
 
     def _build_menu(self) -> None:
         menu = self.menuBar().addMenu("Project")
@@ -194,11 +219,56 @@ class MainWindow(QMainWindow):
             self._set_preview_widget(handler.create_widget(path))
 
     def _build_clicked(self, index) -> None:
+        if self._showing_pak_contents:
+            return
         path = Path(self.build_model.filePath(index))
         self._update_preview_context(path, "Build / PAK")
         if path.is_file():
+            if path.suffix.lower() == ".pak":
+                self._show_pak_contents(path)
             handler = self.preview.handler_for(path)
             self._set_preview_widget(handler.create_widget(path))
+
+    def _show_build_filesystem(self) -> None:
+        self._refresh_tree_roots()
+
+    def _show_pak_contents(self, pak_path: Path) -> None:
+        try:
+            entries = self.pak_archive.read_entries(pak_path)
+        except PakError as exc:
+            QMessageBox.warning(self, "PAK", f"Could not read PAK file:\n{exc}")
+            return
+
+        tree_model = QStandardItemModel(self)
+        tree_model.setHorizontalHeaderLabels(["Name", "Size", "Type", "Date Modified"])
+        root = tree_model.invisibleRootItem()
+        self._append_pak_tree(root, build_pak_tree([(entry.name, entry.size) for entry in entries]))
+
+        self.build_tree.setModel(tree_model)
+        self.build_tree.expandAll()
+        self.build_tree_title.setText(f"PAK Content: {pak_path.name}")
+        self.back_to_build_button.setVisible(True)
+        self._showing_pak_contents = True
+
+    def _append_pak_tree(self, parent: QStandardItem, node: dict[str, dict]) -> None:
+        for name in sorted(node.keys()):
+            info = node[name]
+            if "_children" in info:
+                folder_item = QStandardItem(name)
+                folder_type = QStandardItem("File Folder")
+                parent.appendRow([folder_item, QStandardItem(""), folder_type, QStandardItem("")])
+                self._append_pak_tree(folder_item, info["_children"])
+                continue
+
+            size = info.get("_size", 0)
+            parent.appendRow(
+                [
+                    QStandardItem(name),
+                    QStandardItem(str(size)),
+                    QStandardItem("PAK Entry"),
+                    QStandardItem(""),
+                ]
+            )
 
     def _update_preview_context(self, path: Path, pane_name: str) -> None:
         item_type = "Folder" if path.is_dir() else ("PAK file" if path.suffix.lower() == ".pak" else "File")
