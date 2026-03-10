@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QFileSystemModel,
     QFrame,
+    QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMenu,
@@ -35,6 +38,7 @@ from core.services.settings_service import SettingsService
 from infrastructure.archives.pak import PakArchive, PakError
 from infrastructure.filesystem.watcher import PollingWatchService
 from ui.dialogs.settings_dialog import SettingsDialog
+from ui.panels.source_tree import SourceTreeView
 
 
 def build_pak_tree(paths: list[tuple[str, int]]) -> dict[str, dict]:
@@ -88,11 +92,28 @@ class MainWindow(QMainWindow):
         self._build_menu()
 
         self.source_model = QFileSystemModel(self)
+        self.source_model.setReadOnly(False)
         self.source_tree_title = QLabel("Source")
         self.source_tree_title.setToolTip("Displays source assets and editable files")
-        self.source_tree = QTreeView()
+        self.source_tree = SourceTreeView()
         self.source_tree.setModel(self.source_model)
         self.source_tree.clicked.connect(self._source_clicked)
+
+        source_actions = QWidget()
+        source_action_layout = QHBoxLayout(source_actions)
+        source_action_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.new_source_btn = QPushButton("Neu")
+        self.new_source_btn.clicked.connect(self._create_source_entry)
+        source_action_layout.addWidget(self.new_source_btn)
+
+        self.rename_source_btn = QPushButton("edit")
+        self.rename_source_btn.clicked.connect(self._rename_source_entry)
+        source_action_layout.addWidget(self.rename_source_btn)
+
+        self.delete_source_btn = QPushButton("löschen")
+        self.delete_source_btn.clicked.connect(self._delete_source_entry)
+        source_action_layout.addWidget(self.delete_source_btn)
 
         self.build_model = QFileSystemModel(self)
         self.build_tree_title = QLabel("Build / PAK")
@@ -104,6 +125,7 @@ class MainWindow(QMainWindow):
         source_layout = QVBoxLayout(source_panel)
         source_layout.setContentsMargins(0, 0, 0, 0)
         source_layout.addWidget(self.source_tree_title)
+        source_layout.addWidget(source_actions)
         source_layout.addWidget(self.source_tree)
 
         build_panel = QWidget()
@@ -178,8 +200,77 @@ class MainWindow(QMainWindow):
 
         self.source_model.setRootPath(str(source_root))
         self.source_tree.setRootIndex(self.source_model.index(str(source_root)))
+        self.source_tree.configure_root(source_root)
         self.build_model.setRootPath(str(build_root))
         self._refresh_pak_tree(force=True)
+
+    def _selected_source_path(self) -> Path:
+        index = self.source_tree.currentIndex()
+        if index.isValid():
+            return Path(self.source_model.filePath(index))
+        return self.settings.source_root().resolve()
+
+    def _target_directory_for_selection(self) -> Path:
+        selected = self._selected_source_path()
+        return selected if selected.is_dir() else selected.parent
+
+    def _create_source_entry(self) -> None:
+        target_dir = self._target_directory_for_selection()
+        name, ok = QInputDialog.getText(self, "Neu", "Name für neue Datei/Ordner:")
+        if not ok or not name.strip():
+            return
+
+        candidate = target_dir / name.strip()
+        if candidate.exists():
+            QMessageBox.warning(self, "Neu", "Eintrag existiert bereits.")
+            return
+
+        try:
+            if "." in candidate.name:
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                candidate.touch()
+            else:
+                candidate.mkdir(parents=True, exist_ok=False)
+        except OSError as exc:
+            QMessageBox.warning(self, "Neu", f"Konnte Eintrag nicht erstellen:\n{exc}")
+
+    def _rename_source_entry(self) -> None:
+        selected = self._selected_source_path()
+        if selected == self.settings.source_root().resolve():
+            QMessageBox.information(self, "Edit", "Der Source-Root kann nicht umbenannt werden.")
+            return
+
+        new_name, ok = QInputDialog.getText(self, "Edit", "Neuer Name:", text=selected.name)
+        if not ok or not new_name.strip() or new_name.strip() == selected.name:
+            return
+
+        target = selected.parent / new_name.strip()
+        if target.exists():
+            QMessageBox.warning(self, "Edit", "Zielname existiert bereits.")
+            return
+
+        try:
+            selected.rename(target)
+        except OSError as exc:
+            QMessageBox.warning(self, "Edit", f"Konnte Eintrag nicht umbenennen:\n{exc}")
+
+    def _delete_source_entry(self) -> None:
+        selected = self._selected_source_path()
+        if selected == self.settings.source_root().resolve():
+            QMessageBox.information(self, "Löschen", "Der Source-Root kann nicht gelöscht werden.")
+            return
+
+        confirm = QMessageBox.question(self, "Löschen", f"{selected.name} wirklich löschen?")
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            if selected.is_dir():
+                shutil.rmtree(selected)
+            else:
+                selected.unlink()
+        except OSError as exc:
+            QMessageBox.warning(self, "Löschen", f"Konnte Eintrag nicht löschen:\n{exc}")
 
     def _build_menu(self) -> None:
         menu = self.menuBar().addMenu("Project")
