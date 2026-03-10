@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QPushButton,
     QSplitter,
     QStatusBar,
     QTabWidget,
@@ -76,7 +75,8 @@ class MainWindow(QMainWindow):
         self.preview = preview_service
         self.logs = log_service
         self.pak_archive = PakArchive()
-        self._showing_pak_contents = False
+        self._pak_tree_model = QStandardItemModel(self)
+        self._last_pak_signature: tuple[bool, int, int] | None = None
 
         self.setWindowTitle("QuakeLab Workbench V1")
         self.resize(1400, 900)
@@ -95,10 +95,9 @@ class MainWindow(QMainWindow):
 
         self.build_model = QFileSystemModel(self)
         self.build_tree_title = QLabel("Build / PAK")
-        self.build_tree_title.setToolTip("Displays build output, including generated PAK files")
+        self.build_tree_title.setToolTip("Displays PAK file and its folder/file contents")
         self.build_tree = QTreeView()
-        self.build_tree.setModel(self.build_model)
-        self.build_tree.clicked.connect(self._build_clicked)
+        self.build_tree.setModel(self._pak_tree_model)
 
         source_panel = QWidget()
         source_layout = QVBoxLayout(source_panel)
@@ -110,10 +109,6 @@ class MainWindow(QMainWindow):
         build_layout = QVBoxLayout(build_panel)
         build_layout.setContentsMargins(0, 0, 0, 0)
         build_layout.addWidget(self.build_tree_title)
-        self.back_to_build_button = QPushButton("Back to Build Folder")
-        self.back_to_build_button.clicked.connect(self._show_build_filesystem)
-        self.back_to_build_button.setVisible(False)
-        build_layout.addWidget(self.back_to_build_button)
         build_layout.addWidget(self.build_tree)
 
         left_split = QSplitter()
@@ -183,11 +178,7 @@ class MainWindow(QMainWindow):
         self.source_model.setRootPath(str(source_root))
         self.source_tree.setRootIndex(self.source_model.index(str(source_root)))
         self.build_model.setRootPath(str(build_root))
-        self.build_tree.setRootIndex(self.build_model.index(str(build_root)))
-        self.build_tree.setModel(self.build_model)
-        self.build_tree_title.setText("Build / PAK")
-        self.back_to_build_button.setVisible(False)
-        self._showing_pak_contents = False
+        self._refresh_pak_tree(force=True)
 
     def _build_menu(self) -> None:
         menu = self.menuBar().addMenu("Project")
@@ -218,37 +209,38 @@ class MainWindow(QMainWindow):
             handler = self.preview.handler_for(path)
             self._set_preview_widget(handler.create_widget(path))
 
-    def _build_clicked(self, index) -> None:
-        if self._showing_pak_contents:
-            return
-        path = Path(self.build_model.filePath(index))
-        self._update_preview_context(path, "Build / PAK")
-        if path.is_file():
-            if path.suffix.lower() == ".pak":
-                self._show_pak_contents(path)
-            handler = self.preview.handler_for(path)
-            self._set_preview_widget(handler.create_widget(path))
-
-    def _show_build_filesystem(self) -> None:
-        self._refresh_tree_roots()
-
-    def _show_pak_contents(self, pak_path: Path) -> None:
-        try:
-            entries = self.pak_archive.read_entries(pak_path)
-        except PakError as exc:
-            QMessageBox.warning(self, "PAK", f"Could not read PAK file:\n{exc}")
+    def _refresh_pak_tree(self, force: bool = False) -> None:
+        pak_path = self.settings.pak_output_path().resolve()
+        pak_exists = pak_path.exists() and pak_path.is_file()
+        stat = pak_path.stat() if pak_exists else None
+        signature = (pak_exists, int(stat.st_mtime_ns) if stat else 0, stat.st_size if stat else 0)
+        if not force and signature == self._last_pak_signature:
             return
 
-        tree_model = QStandardItemModel(self)
-        tree_model.setHorizontalHeaderLabels(["Name", "Size", "Type", "Date Modified"])
-        root = tree_model.invisibleRootItem()
-        self._append_pak_tree(root, build_pak_tree([(entry.name, entry.size) for entry in entries]))
+        self._last_pak_signature = signature
+        self._pak_tree_model.clear()
+        self._pak_tree_model.setHorizontalHeaderLabels(["Name", "Size", "Type", "Date Modified"])
+        root = self._pak_tree_model.invisibleRootItem()
 
-        self.build_tree.setModel(tree_model)
-        self.build_tree.expandAll()
+        pak_root_item = QStandardItem(pak_path.name)
+        size_item = QStandardItem(str(stat.st_size) if stat else "")
+        pak_type_item = QStandardItem("PAK file" if pak_exists else "Missing PAK")
+        date_item = QStandardItem("" if not stat else str(int(stat.st_mtime)))
+        root.appendRow([pak_root_item, size_item, pak_type_item, date_item])
+
+        if pak_exists:
+            try:
+                entries = self.pak_archive.read_entries(pak_path)
+            except PakError as exc:
+                QMessageBox.warning(self, "PAK", f"Could not read PAK file:\n{exc}")
+                pak_root_item.appendRow([QStandardItem("<read error>"), QStandardItem(""), QStandardItem("Error"), QStandardItem("")])
+            else:
+                self._append_pak_tree(pak_root_item, build_pak_tree([(entry.name, entry.size) for entry in entries]))
+                self.build_tree.expandAll()
+        else:
+            pak_root_item.appendRow([QStandardItem("<not found>"), QStandardItem(""), QStandardItem("Info"), QStandardItem("")])
+
         self.build_tree_title.setText(f"PAK Content: {pak_path.name}")
-        self.back_to_build_button.setVisible(True)
-        self._showing_pak_contents = True
 
     def _append_pak_tree(self, parent: QStandardItem, node: dict[str, dict]) -> None:
         for name in sorted(node.keys()):
@@ -285,6 +277,7 @@ class MainWindow(QMainWindow):
         logs = self.logs.latest()
         self._fill_table(self.log_table, logs)
         self._fill_table(self.error_table, [log for log in logs if log[1] == "ERROR"])
+        self._refresh_pak_tree()
 
     def _fill_table(self, table: QTableWidget, rows: list[tuple]) -> None:
         table.setRowCount(len(rows))
