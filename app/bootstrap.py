@@ -31,7 +31,7 @@ def run() -> int:
     db = Database(db_path)
 
     project_service = ProjectService(db, project_root)
-    settings_service = SettingsService(db)
+    settings_service = SettingsService(db, project_root)
     log_service = LogService(db)
     journal = ChangeJournalService(db)
     build_queue = BuildQueueService(db)
