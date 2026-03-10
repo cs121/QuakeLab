@@ -1,0 +1,18 @@
+{
+  "project_name": "QuakeForge",
+  "source_root": "src",
+  "build_root": "build",
+  "deploy_root": "deploy",
+  "pak_output_path": "build/pak0.pak",
+  "auto_watch": "1",
+  "auto_flush": "1",
+  "flush_interval_minutes": "3",
+  "pack_after_build": "1",
+  "deploy_after_build": "0",
+  "map_build_mode": "fast",
+  "qc_executable": "",
+  "qc_args": "",
+  "qbsp_executable": "",
+  "vis_executable": "",
+  "light_executable": ""
+}
