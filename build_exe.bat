@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-REM QuakeForge Workbench EXE Build Script (Windows)
+REM QuakeLab EXE Build Script (Windows)
 REM Usage: run in repo root with active Python environment.
 
 where pyinstaller >nul 2>nul
@@ -19,7 +19,7 @@ python -m PyInstaller ^
   --noconfirm ^
   --clean ^
   --windowed ^
-  --name QuakeForgeWorkbench ^
+  --name QuakeLab ^
   app/main.py
 
 if errorlevel 1 (
@@ -28,6 +28,6 @@ if errorlevel 1 (
 )
 
 echo [OK] Build erfolgreich.
-echo [OK] EXE: dist\QuakeForgeWorkbench\QuakeForgeWorkbench.exe
+echo [OK] EXE: dist\QuakeLab.exe
 
 endlocal
