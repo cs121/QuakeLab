@@ -118,3 +118,13 @@ class Database:
     def query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
         with self._lock:
             return list(self.conn.execute(sql, params))
+
+    def rebuild(self) -> None:
+        """Recreate the project database and re-apply schema defaults."""
+        with self._lock:
+            self.conn.close()
+            if self.path.exists():
+                self.path.unlink()
+            self.conn = sqlite3.connect(self.path, check_same_thread=False)
+            self.conn.row_factory = sqlite3.Row
+            self._init()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from infrastructure.db.database import Database
@@ -44,6 +45,35 @@ class SettingsService:
         payload = json.loads(path.read_text(encoding="utf-8"))
         for key, value in payload.items():
             self.set(key, str(value))
+
+
+    def _is_within_project_root(self, path: Path) -> bool:
+        try:
+            path.resolve().relative_to(self.project_root)
+            return True
+        except ValueError:
+            return False
+
+    def reset_workspace(self) -> None:
+        roots_to_clean = {
+            self.source_root(),
+            self.build_root(),
+            self.deploy_root(),
+            (self.project_root / "src").resolve(),
+            (self.project_root / "build").resolve(),
+            (self.project_root / "deploy").resolve(),
+        }
+
+        self.db.rebuild()
+
+        for root in roots_to_clean:
+            if root.exists() and root.is_dir() and self._is_within_project_root(root):
+                shutil.rmtree(root)
+
+        self.source_root().mkdir(parents=True, exist_ok=True)
+        self.build_root().mkdir(parents=True, exist_ok=True)
+        self.deploy_root().mkdir(parents=True, exist_ok=True)
+        self.pak_output_path().parent.mkdir(parents=True, exist_ok=True)
 
     def source_root(self) -> Path:
         return self._resolve_path(self.get("source_root", "src"))
