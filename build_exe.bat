@@ -14,12 +14,14 @@ if errorlevel 1 (
   )
 )
 
-echo [INFO] Erzeuge EXE mit PyInstaller...
+echo [INFO] Erzeuge eigenstaendige EXE mit PyInstaller (--onefile)...
 python -m PyInstaller ^
   --noconfirm ^
   --clean ^
   --windowed ^
+  --onefile ^
   --name QuakeLab ^
+  --collect-all PySide6 ^
   app/main.py
 
 if errorlevel 1 (

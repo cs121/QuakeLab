@@ -24,10 +24,10 @@ from ui.main_window import MainWindow
 
 def run() -> int:
     app = QApplication(sys.argv)
-    app.setApplicationName("QuakeForge")
+    app.setApplicationName("QuakeLab")
 
     project_root = Path.cwd()
-    db_path = project_root / ".quakeforge" / "workbench.db"
+    db_path = project_root / ".quakelab" / "quakelab.db"
     db = Database(db_path)
 
     project_service = ProjectService(db, project_root)

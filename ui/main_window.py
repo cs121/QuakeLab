@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
         self.preview = preview_service
         self.logs = log_service
 
-        self.setWindowTitle("QuakeForge Workbench V1")
+        self.setWindowTitle("QuakeLab Workbench V1")
         self.resize(1400, 900)
         self._build_ui()
         self._init_timer()

@@ -1,6 +1,6 @@
-# QuakeForge Workbench V1
+# QuakeLab Workbench V1
 
-QuakeForge ist eine modulare Python-Desktop-Anwendung (PySide6) für Quake-Modding-Workflows mit Source-Watching, Change-Journal, Build-Queue, Toolchain-Integration und PAK-Rebuild.
+QuakeLab ist eine modulare Python-Desktop-Anwendung (PySide6) für Quake-Modding-Workflows mit Source-Watching, Change-Journal, Build-Queue, Toolchain-Integration und PAK-Rebuild.
 
 ## Voraussetzungen
 
@@ -35,7 +35,7 @@ Projektwurzel öffnen und starten:
 python -m app.main
 ```
 
-Beim ersten Start werden automatisch Standardordner (`src`, `build`) und die SQLite-Datenbank unter `.quakeforge/workbench.db` angelegt.
+Beim ersten Start werden automatisch Standardordner (`src`, `build`) und die SQLite-Datenbank unter `.quakelab/quakelab.db` angelegt.
 
 ## Bedienung (Kurz-Anleitung)
 
@@ -69,8 +69,8 @@ build_exe.bat
 
 Ergebnis:
 
-- EXE und Laufzeitdateien unter `dist\QuakeForgeWorkbench\`
-- Startdatei: `dist\QuakeForgeWorkbench\QuakeForgeWorkbench.exe`
+- EXE-Datei unter `dist\`
+- Startdatei: `dist\QuakeLab.exe`
 
 ## Features (V1)
 
@@ -80,7 +80,7 @@ Ergebnis:
   - Preview-Bereich (rechts)
   - Tabs: Change Journal, Build Queue, Logs, Errors (unten)
 - Source-Hot-Path Monitoring mit Debounce und Deduplizierung.
-- Persistenter Change-Journal und Build-Queue in SQLite (`.quakeforge/workbench.db`).
+- Persistenter Change-Journal und Build-Queue in SQLite (`.quakelab/quakelab.db`).
 - Regelbasierte Build-Aktionen (`compile_qc`, `compile_map`, `pack_asset`, `remove_asset`, `rebuild_pak`).
 - QuakeC-/Map-Toolchain-Integration via konfigurierbare externe Prozesse.
 - Periodischer oder manueller Queue-Flush inkl. atomischem PAK-Rebuild.
