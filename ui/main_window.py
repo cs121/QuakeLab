@@ -68,43 +68,31 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         self._build_menu()
-        source_root = self.settings.source_root().resolve()
-        build_root = self.settings.build_root().resolve()
-        build_root.mkdir(parents=True, exist_ok=True)
-        source_root.mkdir(parents=True, exist_ok=True)
 
         self.source_model = QFileSystemModel(self)
-        self.source_model.setRootPath(str(source_root))
         self.source_tree_title = QLabel("Source")
-        self.source_tree_info = QLabel("Displays source assets and editable files")
-        self.source_tree_info.setObjectName("paneInfoLabel")
+        self.source_tree_title.setToolTip("Displays source assets and editable files")
         self.source_tree = QTreeView()
         self.source_tree.setModel(self.source_model)
-        self.source_tree.setRootIndex(self.source_model.index(str(source_root)))
         self.source_tree.clicked.connect(self._source_clicked)
 
         self.build_model = QFileSystemModel(self)
-        self.build_model.setRootPath(str(build_root))
         self.build_tree_title = QLabel("Build / PAK")
-        self.build_tree_info = QLabel("Displays build output, including generated PAK files")
-        self.build_tree_info.setObjectName("paneInfoLabel")
+        self.build_tree_title.setToolTip("Displays build output, including generated PAK files")
         self.build_tree = QTreeView()
         self.build_tree.setModel(self.build_model)
-        self.build_tree.setRootIndex(self.build_model.index(str(build_root)))
         self.build_tree.clicked.connect(self._build_clicked)
 
         source_panel = QWidget()
         source_layout = QVBoxLayout(source_panel)
         source_layout.setContentsMargins(0, 0, 0, 0)
         source_layout.addWidget(self.source_tree_title)
-        source_layout.addWidget(self.source_tree_info)
         source_layout.addWidget(self.source_tree)
 
         build_panel = QWidget()
         build_layout = QVBoxLayout(build_panel)
         build_layout.setContentsMargins(0, 0, 0, 0)
         build_layout.addWidget(self.build_tree_title)
-        build_layout.addWidget(self.build_tree_info)
         build_layout.addWidget(self.build_tree)
 
         left_split = QSplitter()
@@ -143,10 +131,15 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.log_table, "Logs")
         tabs.addTab(self.error_table, "Errors")
 
+        self.main_splitter = QSplitter()
+        self.main_splitter.setOrientation(Qt.Orientation.Vertical)
+        self.main_splitter.addWidget(top_split)
+        self.main_splitter.addWidget(tabs)
+        self.main_splitter.setSizes([700, 200])
+
         root = QWidget()
         layout = QVBoxLayout(root)
-        layout.addWidget(top_split, 3)
-        layout.addWidget(tabs, 2)
+        layout.addWidget(self.main_splitter)
         self.setCentralWidget(root)
 
         status = QStatusBar()
@@ -157,6 +150,19 @@ class MainWindow(QMainWindow):
         flush_btn.clicked.connect(self.flush_queue)
         status.addPermanentWidget(flush_btn)
         self.setStatusBar(status)
+
+        self._refresh_tree_roots()
+
+    def _refresh_tree_roots(self) -> None:
+        source_root = self.settings.source_root().resolve()
+        build_root = self.settings.build_root().resolve()
+        build_root.mkdir(parents=True, exist_ok=True)
+        source_root.mkdir(parents=True, exist_ok=True)
+
+        self.source_model.setRootPath(str(source_root))
+        self.source_tree.setRootIndex(self.source_model.index(str(source_root)))
+        self.build_model.setRootPath(str(build_root))
+        self.build_tree.setRootIndex(self.build_model.index(str(build_root)))
 
     def _build_menu(self) -> None:
         menu = self.menuBar().addMenu("Project")
@@ -200,7 +206,8 @@ class MainWindow(QMainWindow):
 
     def open_settings(self) -> None:
         dialog = SettingsDialog(self.settings, self)
-        dialog.exec()
+        if dialog.exec():
+            self._refresh_tree_roots()
 
     def refresh_tables(self) -> None:
         self._fill_table(self.change_table, self.change_journal.latest())
