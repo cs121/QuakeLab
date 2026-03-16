@@ -6,6 +6,7 @@ import shutil
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFileSystemModel,
     QFrame,
     QHBoxLayout,
@@ -35,6 +36,7 @@ from core.services.deploy_service import DeployService
 from core.services.launch_service import LaunchService
 from core.services.log_service import LogService
 from core.services.rebuild_service import RebuildService
+from core.services.release_service import ReleaseService
 from core.services.template_service import TemplateService
 from core.services.validation_service import ValidationService
 from core.services.pack_service import PackService
@@ -79,6 +81,7 @@ class MainWindow(QMainWindow):
         rebuild_service: RebuildService,
         validation_service: ValidationService,
         template_service: TemplateService,
+        release_service: ReleaseService,
         watch_service: PollingWatchService,
         preview_service: PreviewService,
         log_service: LogService,
@@ -95,6 +98,7 @@ class MainWindow(QMainWindow):
         self.rebuild = rebuild_service
         self.validation = validation_service
         self.templates = template_service
+        self.release = release_service
         self.watch = watch_service
         self.preview = preview_service
         self.logs = log_service
@@ -323,6 +327,9 @@ class MainWindow(QMainWindow):
         build_menu.addSeparator()
         play_action = build_menu.addAction("Play")
         play_action.triggered.connect(self._launch_game)
+        build_menu.addSeparator()
+        release_action = build_menu.addAction("Create Release...")
+        release_action.triggered.connect(self._create_release)
         build_menu.addSeparator()
         clear_output_action = build_menu.addAction("Clear Build Output")
         clear_output_action.triggered.connect(self.build_output.clear)
@@ -557,6 +564,18 @@ class MainWindow(QMainWindow):
             self.build_output.appendPlainText("[INFO] Build directory cleaned.")
         else:
             QMessageBox.warning(self, "Clean", "Failed to clean build directory. See Logs.")
+
+    def _create_release(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Create Release ZIP", "release.zip", "ZIP Archives (*.zip)"
+        )
+        if not path:
+            return
+        ok = self.release.create_release(Path(path))
+        if ok:
+            QMessageBox.information(self, "Release", f"Release created: {path}")
+        else:
+            QMessageBox.warning(self, "Release", "Failed to create release. See Logs.")
 
     def _launch_game(self) -> None:
         exe = self.settings.get("engine_exe", "")
