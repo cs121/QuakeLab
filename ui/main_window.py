@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QFileSystemModel,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QStatusBar,
@@ -25,12 +26,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.models.domain import BuildAction
+from core.models.domain import BuildAction, CompilerDiagnostic
+from core.parsers.qc_error_parser import parse_diagnostics
 from core.services.build_queue_service import BuildQueueService
 from core.services.change_journal_service import ChangeJournalService
 from core.services.compiler_service import CompilerService
 from core.services.deploy_service import DeployService
+from core.services.launch_service import LaunchService
 from core.services.log_service import LogService
+from core.services.rebuild_service import RebuildService
+from core.services.validation_service import ValidationService
 from core.services.pack_service import PackService
 from core.services.preview_service import PreviewService
 from core.services.project_service import ProjectService
@@ -39,6 +44,11 @@ from infrastructure.archives.pak import PakArchive, PakError
 from infrastructure.filesystem.watcher import PollingWatchService
 from ui.dialogs.settings_dialog import SettingsDialog
 from ui.panels.source_tree import SourceTreeView
+
+
+class _LineBridge(QObject):
+    """Thread-safe bridge: emits a Qt signal for each line from a background thread."""
+    line_received = Signal(str, str)  # (stream_name, text)
 
 
 def build_pak_tree(paths: list[tuple[str, int]]) -> dict[str, dict]:
@@ -64,6 +74,9 @@ class MainWindow(QMainWindow):
         compiler_service: CompilerService,
         pack_service: PackService,
         deploy_service: DeployService,
+        launch_service: LaunchService,
+        rebuild_service: RebuildService,
+        validation_service: ValidationService,
         watch_service: PollingWatchService,
         preview_service: PreviewService,
         log_service: LogService,
@@ -76,12 +89,16 @@ class MainWindow(QMainWindow):
         self.compiler = compiler_service
         self.pack = pack_service
         self.deploy = deploy_service
+        self.launch = launch_service
+        self.rebuild = rebuild_service
+        self.validation = validation_service
         self.watch = watch_service
         self.preview = preview_service
         self.logs = log_service
         self.pak_archive = PakArchive()
         self._pak_tree_model = QStandardItemModel(self)
         self._last_pak_signature: tuple[bool, int, int] | None = None
+        self._diagnostics: list[CompilerDiagnostic] = []
 
         self.setWindowTitle("QuakeLab Workbench V1")
         self.resize(1400, 900)
@@ -162,11 +179,20 @@ class MainWindow(QMainWindow):
         self.log_table = QTableWidget(0, 4)
         self.log_table.setHorizontalHeaderLabels(["Time", "Level", "Source", "Message"])
         self.error_table = QTableWidget(0, 4)
-        self.error_table.setHorizontalHeaderLabels(["Time", "Level", "Source", "Message"])
+        self.error_table.setHorizontalHeaderLabels(["File", "Line", "Severity", "Message"])
+        self.error_table.cellDoubleClicked.connect(self._error_double_clicked)
+
+        self.build_output = QPlainTextEdit()
+        self.build_output.setReadOnly(True)
+        self.build_output.setMaximumBlockCount(5000)
+
+        self._line_bridge = _LineBridge()
+        self._line_bridge.line_received.connect(self._on_build_line)
 
         tabs = QTabWidget()
         tabs.addTab(self.change_table, "Change Journal")
         tabs.addTab(self.queue_table, "Build Queue")
+        tabs.addTab(self.build_output, "Build Output")
         tabs.addTab(self.log_table, "Logs")
         tabs.addTab(self.error_table, "Errors")
 
@@ -188,6 +214,10 @@ class MainWindow(QMainWindow):
         flush_btn = QPushButton("Flush Build Queue")
         flush_btn.clicked.connect(self.flush_queue)
         status.addPermanentWidget(flush_btn)
+
+        play_btn = QPushButton("Play")
+        play_btn.clicked.connect(self._launch_game)
+        status.addPermanentWidget(play_btn)
         self.setStatusBar(status)
 
         self._refresh_tree_roots()
@@ -277,6 +307,20 @@ class MainWindow(QMainWindow):
         settings_action = menu.addAction("Settings")
         settings_action.triggered.connect(self.open_settings)
 
+        build_menu = self.menuBar().addMenu("Build")
+        flush_action = build_menu.addAction("Flush Queue")
+        flush_action.triggered.connect(self.flush_queue)
+        rebuild_action = build_menu.addAction("Rebuild All")
+        rebuild_action.triggered.connect(self._rebuild_all)
+        clean_action = build_menu.addAction("Clean Build Directory")
+        clean_action.triggered.connect(self._clean_build)
+        build_menu.addSeparator()
+        play_action = build_menu.addAction("Play")
+        play_action.triggered.connect(self._launch_game)
+        build_menu.addSeparator()
+        clear_output_action = build_menu.addAction("Clear Build Output")
+        clear_output_action.triggered.connect(self.build_output.clear)
+
     def _init_timer(self) -> None:
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self.refresh_tables)
@@ -299,7 +343,30 @@ class MainWindow(QMainWindow):
         self._update_preview_context(path, "Source")
         if path.is_file():
             handler = self.preview.handler_for(path)
-            self._set_preview_widget(handler.create_widget(path))
+            preview_widget = handler.create_widget(path)
+            # Auto-validate shader files
+            if path.suffix.lower() == ".shader":
+                diags = self.validation.validate_shader_file(path)
+                if diags:
+                    container = QWidget()
+                    layout = QVBoxLayout(container)
+                    layout.setContentsMargins(0, 0, 0, 0)
+                    layout.addWidget(preview_widget, stretch=3)
+                    validation_label = QLabel(
+                        f"Validation: {len(diags)} issue(s) found"
+                    )
+                    validation_label.setStyleSheet("color: orange; font-weight: bold;")
+                    layout.addWidget(validation_label)
+                    val_table = QTableWidget(len(diags), 3)
+                    val_table.setHorizontalHeaderLabels(["Line", "Severity", "Message"])
+                    for i, d in enumerate(diags):
+                        val_table.setItem(i, 0, QTableWidgetItem(str(d.line)))
+                        val_table.setItem(i, 1, QTableWidgetItem(d.severity))
+                        val_table.setItem(i, 2, QTableWidgetItem(d.message))
+                    layout.addWidget(val_table, stretch=1)
+                    self._set_preview_widget(container)
+                    return
+            self._set_preview_widget(preview_widget)
 
     def _refresh_pak_tree(self, force: bool = False) -> None:
         pak_path = self.settings.pak_output_path().resolve()
@@ -368,7 +435,7 @@ class MainWindow(QMainWindow):
         self._fill_table(self.queue_table, self.build_queue.latest())
         logs = self.logs.latest()
         self._fill_table(self.log_table, logs)
-        self._fill_table(self.error_table, [log for log in logs if log[1] == "ERROR"])
+        self._fill_diagnostics_table()
         self._refresh_pak_tree()
 
     def _fill_table(self, table: QTableWidget, rows: list[tuple]) -> None:
@@ -377,9 +444,92 @@ class MainWindow(QMainWindow):
             for j, val in enumerate(row):
                 table.setItem(i, j, QTableWidgetItem(str(val)))
 
+    def _fill_diagnostics_table(self) -> None:
+        diags = self._diagnostics
+        self.error_table.setRowCount(len(diags))
+        for i, d in enumerate(diags):
+            self.error_table.setItem(i, 0, QTableWidgetItem(d.file_path))
+            self.error_table.setItem(i, 1, QTableWidgetItem(str(d.line)))
+            self.error_table.setItem(i, 2, QTableWidgetItem(d.severity))
+            self.error_table.setItem(i, 3, QTableWidgetItem(d.message))
+
+    def _error_double_clicked(self, row: int, _col: int) -> None:
+        if row >= len(self._diagnostics):
+            return
+        diag = self._diagnostics[row]
+        source_root = self.settings.source_root().resolve()
+        file_path = Path(diag.file_path)
+        if not file_path.is_absolute():
+            file_path = source_root / file_path
+        if not file_path.is_file():
+            return
+        self._update_preview_context(file_path, "Error")
+        handler = self.preview.handler_for(file_path)
+        widget = handler.create_widget(file_path)
+        self._set_preview_widget(widget)
+        # Scroll to the error line if the widget is a text editor
+        if hasattr(widget, "document") and callable(widget.document):
+            from PySide6.QtGui import QTextCursor
+            doc = widget.document()
+            block = doc.findBlockByLineNumber(diag.line - 1)
+            if block.isValid():
+                cursor = QTextCursor(block)
+                widget.setTextCursor(cursor)
+                widget.centerCursor()
+
+    def _update_diagnostics_from_output(self, output: str) -> None:
+        new_diags = parse_diagnostics(output)
+        if new_diags:
+            self._diagnostics = new_diags
+            self._fill_diagnostics_table()
+
     def _auto_flush(self) -> None:
         if self.settings.get("auto_flush", "1") == "1":
             self.flush_queue()
+
+    def _on_build_line(self, stream: str, text: str) -> None:
+        prefix = "ERR" if stream == "stderr" else "   "
+        self.build_output.appendPlainText(f"[{prefix}] {text}")
+
+    def _build_line_callback(self, stream: str, text: str) -> None:
+        """Thread-safe callback passed to streaming compiler methods."""
+        self._line_bridge.line_received.emit(stream, text)
+
+    def _rebuild_all(self) -> None:
+        confirm = QMessageBox.question(
+            self, "Rebuild All",
+            "This will clean the build directory and rebuild everything. Continue?",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self.build_output.clear()
+        self.build_output.appendPlainText("=== Rebuild All ===")
+        result = self.rebuild.rebuild_all(on_line=self._build_line_callback)
+        self.build_output.appendPlainText(f"\n{result.summary()}")
+        if not result.ok:
+            QMessageBox.warning(self, "Rebuild", "Rebuild completed with errors. See Build Output.")
+
+    def _clean_build(self) -> None:
+        confirm = QMessageBox.question(
+            self, "Clean Build",
+            "This will delete all files in the build directory. Continue?",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        ok = self.rebuild.clean_build_dir()
+        if ok:
+            self.build_output.appendPlainText("[INFO] Build directory cleaned.")
+        else:
+            QMessageBox.warning(self, "Clean", "Failed to clean build directory. See Logs.")
+
+    def _launch_game(self) -> None:
+        exe = self.settings.get("engine_exe", "")
+        if not exe:
+            QMessageBox.warning(self, "Play", "No engine executable configured. Set it in Settings.")
+            return
+        proc = self.launch.launch_game()
+        if proc is None:
+            QMessageBox.warning(self, "Play", "Failed to launch engine. See Logs tab.")
 
     def flush_queue(self) -> None:
         has_error = False
@@ -400,9 +550,23 @@ class MainWindow(QMainWindow):
     def _execute_action(self, action: BuildAction) -> bool:
         path = self.settings.source_root() / action.relative_path
         if action.action_type == "compile_qc":
-            return self.compiler.compile_qc(self.settings.source_root())
+            result = self.compiler.compile_qc_streaming(
+                self.settings.source_root(), on_line=self._build_line_callback
+            )
+            if result is not None:
+                combined = f"{result.stdout}\n{result.stderr}"
+                self._update_diagnostics_from_output(combined)
+                return result.code == 0
+            return False
         if action.action_type == "compile_map":
-            return self.compiler.compile_map(path)
+            result = self.compiler.compile_map_streaming(
+                path, on_line=self._build_line_callback
+            )
+            if result is not None:
+                combined = f"{result.stdout}\n{result.stderr}"
+                self._update_diagnostics_from_output(combined)
+                return result.code == 0
+            return False
         if action.action_type == "rebuild_pak":
             ok = self.pack.rebuild_pak()
             if ok and self.settings.get("deploy_after_build", "0") == "1":

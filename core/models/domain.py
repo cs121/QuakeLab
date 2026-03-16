@@ -41,3 +41,20 @@ class ProjectPaths:
     build_root: Path
     deploy_root: Path
     pak_output_path: Path
+
+
+@dataclass(slots=True)
+class CompilerDiagnostic:
+    file_path: str
+    line: int
+    column: int | None
+    severity: str  # "error", "warning"
+    message: str
+
+
+@dataclass(slots=True)
+class ValidationDiagnostic:
+    file_path: str
+    line: int
+    severity: str  # "error", "warning", "info"
+    message: str
