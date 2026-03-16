@@ -26,7 +26,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.models.domain import BuildAction
+from core.models.domain import BuildAction, CompilerDiagnostic
+from core.parsers.qc_error_parser import parse_diagnostics
 from core.services.build_queue_service import BuildQueueService
 from core.services.change_journal_service import ChangeJournalService
 from core.services.compiler_service import CompilerService
@@ -88,6 +89,7 @@ class MainWindow(QMainWindow):
         self.pak_archive = PakArchive()
         self._pak_tree_model = QStandardItemModel(self)
         self._last_pak_signature: tuple[bool, int, int] | None = None
+        self._diagnostics: list[CompilerDiagnostic] = []
 
         self.setWindowTitle("QuakeLab Workbench V1")
         self.resize(1400, 900)
@@ -168,7 +170,8 @@ class MainWindow(QMainWindow):
         self.log_table = QTableWidget(0, 4)
         self.log_table.setHorizontalHeaderLabels(["Time", "Level", "Source", "Message"])
         self.error_table = QTableWidget(0, 4)
-        self.error_table.setHorizontalHeaderLabels(["Time", "Level", "Source", "Message"])
+        self.error_table.setHorizontalHeaderLabels(["File", "Line", "Severity", "Message"])
+        self.error_table.cellDoubleClicked.connect(self._error_double_clicked)
 
         self.build_output = QPlainTextEdit()
         self.build_output.setReadOnly(True)
@@ -389,7 +392,7 @@ class MainWindow(QMainWindow):
         self._fill_table(self.queue_table, self.build_queue.latest())
         logs = self.logs.latest()
         self._fill_table(self.log_table, logs)
-        self._fill_table(self.error_table, [log for log in logs if log[1] == "ERROR"])
+        self._fill_diagnostics_table()
         self._refresh_pak_tree()
 
     def _fill_table(self, table: QTableWidget, rows: list[tuple]) -> None:
@@ -397,6 +400,45 @@ class MainWindow(QMainWindow):
         for i, row in enumerate(rows):
             for j, val in enumerate(row):
                 table.setItem(i, j, QTableWidgetItem(str(val)))
+
+    def _fill_diagnostics_table(self) -> None:
+        diags = self._diagnostics
+        self.error_table.setRowCount(len(diags))
+        for i, d in enumerate(diags):
+            self.error_table.setItem(i, 0, QTableWidgetItem(d.file_path))
+            self.error_table.setItem(i, 1, QTableWidgetItem(str(d.line)))
+            self.error_table.setItem(i, 2, QTableWidgetItem(d.severity))
+            self.error_table.setItem(i, 3, QTableWidgetItem(d.message))
+
+    def _error_double_clicked(self, row: int, _col: int) -> None:
+        if row >= len(self._diagnostics):
+            return
+        diag = self._diagnostics[row]
+        source_root = self.settings.source_root().resolve()
+        file_path = Path(diag.file_path)
+        if not file_path.is_absolute():
+            file_path = source_root / file_path
+        if not file_path.is_file():
+            return
+        self._update_preview_context(file_path, "Error")
+        handler = self.preview.handler_for(file_path)
+        widget = handler.create_widget(file_path)
+        self._set_preview_widget(widget)
+        # Scroll to the error line if the widget is a text editor
+        if hasattr(widget, "document") and callable(widget.document):
+            from PySide6.QtGui import QTextCursor
+            doc = widget.document()
+            block = doc.findBlockByLineNumber(diag.line - 1)
+            if block.isValid():
+                cursor = QTextCursor(block)
+                widget.setTextCursor(cursor)
+                widget.centerCursor()
+
+    def _update_diagnostics_from_output(self, output: str) -> None:
+        new_diags = parse_diagnostics(output)
+        if new_diags:
+            self._diagnostics = new_diags
+            self._fill_diagnostics_table()
 
     def _auto_flush(self) -> None:
         if self.settings.get("auto_flush", "1") == "1":
@@ -429,9 +471,23 @@ class MainWindow(QMainWindow):
     def _execute_action(self, action: BuildAction) -> bool:
         path = self.settings.source_root() / action.relative_path
         if action.action_type == "compile_qc":
-            return self.compiler.compile_qc(self.settings.source_root())
+            result = self.compiler.compile_qc_streaming(
+                self.settings.source_root(), on_line=self._build_line_callback
+            )
+            if result is not None:
+                combined = f"{result.stdout}\n{result.stderr}"
+                self._update_diagnostics_from_output(combined)
+                return result.code == 0
+            return False
         if action.action_type == "compile_map":
-            return self.compiler.compile_map(path)
+            result = self.compiler.compile_map_streaming(
+                path, on_line=self._build_line_callback
+            )
+            if result is not None:
+                combined = f"{result.stdout}\n{result.stderr}"
+                self._update_diagnostics_from_output(combined)
+                return result.code == 0
+            return False
         if action.action_type == "rebuild_pak":
             ok = self.pack.rebuild_pak()
             if ok and self.settings.get("deploy_after_build", "0") == "1":
