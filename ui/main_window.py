@@ -35,6 +35,7 @@ from core.services.deploy_service import DeployService
 from core.services.launch_service import LaunchService
 from core.services.log_service import LogService
 from core.services.rebuild_service import RebuildService
+from core.services.template_service import TemplateService
 from core.services.validation_service import ValidationService
 from core.services.pack_service import PackService
 from core.services.preview_service import PreviewService
@@ -77,6 +78,7 @@ class MainWindow(QMainWindow):
         launch_service: LaunchService,
         rebuild_service: RebuildService,
         validation_service: ValidationService,
+        template_service: TemplateService,
         watch_service: PollingWatchService,
         preview_service: PreviewService,
         log_service: LogService,
@@ -92,6 +94,7 @@ class MainWindow(QMainWindow):
         self.launch = launch_service
         self.rebuild = rebuild_service
         self.validation = validation_service
+        self.templates = template_service
         self.watch = watch_service
         self.preview = preview_service
         self.logs = log_service
@@ -304,6 +307,9 @@ class MainWindow(QMainWindow):
 
     def _build_menu(self) -> None:
         menu = self.menuBar().addMenu("Project")
+        template_action = menu.addAction("New Project from Template...")
+        template_action.triggered.connect(self._new_from_template)
+        menu.addSeparator()
         settings_action = menu.addAction("Settings")
         settings_action.triggered.connect(self.open_settings)
 
@@ -436,6 +442,24 @@ class MainWindow(QMainWindow):
     def _update_preview_context(self, path: Path, pane_name: str) -> None:
         item_type = "Folder" if path.is_dir() else ("PAK file" if path.suffix.lower() == ".pak" else "File")
         self.preview_context.setText(f"Window: {pane_name} | Item: {item_type} | Path: {path.name}")
+
+    def _new_from_template(self) -> None:
+        templates = self.templates.available_templates()
+        name, ok = QInputDialog.getItem(
+            self, "New Project from Template", "Select template:", templates, 0, False
+        )
+        if not ok or not name:
+            return
+        target = self.settings.source_root().resolve().parent
+        confirm = QMessageBox.question(
+            self, "New Project",
+            f"Create '{name}' template in {target}?\nExisting files will not be overwritten.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        created = self.templates.create_from_template(name, target)
+        self._refresh_tree_roots()
+        QMessageBox.information(self, "Template", f"Created {len(created)} file(s).")
 
     def open_settings(self) -> None:
         dialog = SettingsDialog(self.settings, self)
