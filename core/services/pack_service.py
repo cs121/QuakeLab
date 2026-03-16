@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import fnmatch
+import json
 import shutil
 from pathlib import Path
 
@@ -33,6 +35,19 @@ class PackService:
                 files.append((rel, path))
         return files
 
+    def _collect_files_matching(self, patterns: list[str]) -> list[tuple[str, Path]]:
+        """Collect files matching any of the given glob patterns."""
+        all_files = self._collect_files()
+        if patterns == ["*"]:
+            return all_files
+        matched: list[tuple[str, Path]] = []
+        for rel, path in all_files:
+            for pattern in patterns:
+                if fnmatch.fnmatch(rel, pattern):
+                    matched.append((rel, path))
+                    break
+        return matched
+
     def rebuild_pak(self) -> bool:
         output = self.settings.pak_output_path()
         files = self._collect_files()
@@ -56,6 +71,48 @@ class PackService:
             if backup.exists():
                 backup.replace(output)
             return False
+
+    def rebuild_paks(self) -> bool:
+        """Build multiple PAK files based on pak_definitions setting.
+
+        pak_definitions is a JSON string mapping PAK names to glob patterns:
+        {"pak0.pak": ["progs.dat", "maps/*"], "pak1.pak": ["gfx/*", "textures/*"]}
+
+        Falls back to single PAK via rebuild_pak() if not configured.
+        """
+        defs_json = self.settings.get("pak_definitions", "")
+        if not defs_json:
+            return self.rebuild_pak()
+
+        try:
+            definitions: dict[str, list[str]] = json.loads(defs_json)
+        except json.JSONDecodeError as exc:
+            self.logs.write("ERROR", "Pack", f"Invalid pak_definitions JSON: {exc}")
+            return False
+
+        build_root = self.settings.build_root()
+        all_ok = True
+
+        for pak_name, patterns in definitions.items():
+            output = build_root / pak_name
+            files = self._collect_files_matching(patterns)
+            backup = output.with_suffix(output.suffix + ".bak")
+
+            try:
+                if output.exists():
+                    shutil.copy2(output, backup)
+                self.pak.write(output, files)
+                self.logs.write(
+                    "INFO", "Pack",
+                    f"{pak_name}: {len(files)} entries ({', '.join(patterns)})"
+                )
+            except (PakError, Exception) as exc:
+                self.logs.write("ERROR", "Pack", f"{pak_name} failed: {exc}")
+                if backup.exists():
+                    backup.replace(output)
+                all_ok = False
+
+        return all_ok
 
     def list_pak(self) -> list[str]:
         output = self.settings.pak_output_path()
