@@ -32,6 +32,7 @@ from core.services.build_queue_service import BuildQueueService
 from core.services.change_journal_service import ChangeJournalService
 from core.services.compiler_service import CompilerService
 from core.services.deploy_service import DeployService
+from core.services.launch_service import LaunchService
 from core.services.log_service import LogService
 from core.services.pack_service import PackService
 from core.services.preview_service import PreviewService
@@ -71,6 +72,7 @@ class MainWindow(QMainWindow):
         compiler_service: CompilerService,
         pack_service: PackService,
         deploy_service: DeployService,
+        launch_service: LaunchService,
         watch_service: PollingWatchService,
         preview_service: PreviewService,
         log_service: LogService,
@@ -83,6 +85,7 @@ class MainWindow(QMainWindow):
         self.compiler = compiler_service
         self.pack = pack_service
         self.deploy = deploy_service
+        self.launch = launch_service
         self.watch = watch_service
         self.preview = preview_service
         self.logs = log_service
@@ -205,6 +208,10 @@ class MainWindow(QMainWindow):
         flush_btn = QPushButton("Flush Build Queue")
         flush_btn.clicked.connect(self.flush_queue)
         status.addPermanentWidget(flush_btn)
+
+        play_btn = QPushButton("Play")
+        play_btn.clicked.connect(self._launch_game)
+        status.addPermanentWidget(play_btn)
         self.setStatusBar(status)
 
         self._refresh_tree_roots()
@@ -297,6 +304,9 @@ class MainWindow(QMainWindow):
         build_menu = self.menuBar().addMenu("Build")
         flush_action = build_menu.addAction("Flush Queue")
         flush_action.triggered.connect(self.flush_queue)
+        build_menu.addSeparator()
+        play_action = build_menu.addAction("Play")
+        play_action.triggered.connect(self._launch_game)
         build_menu.addSeparator()
         clear_output_action = build_menu.addAction("Clear Build Output")
         clear_output_action.triggered.connect(self.build_output.clear)
@@ -451,6 +461,15 @@ class MainWindow(QMainWindow):
     def _build_line_callback(self, stream: str, text: str) -> None:
         """Thread-safe callback passed to streaming compiler methods."""
         self._line_bridge.line_received.emit(stream, text)
+
+    def _launch_game(self) -> None:
+        exe = self.settings.get("engine_exe", "")
+        if not exe:
+            QMessageBox.warning(self, "Play", "No engine executable configured. Set it in Settings.")
+            return
+        proc = self.launch.launch_game()
+        if proc is None:
+            QMessageBox.warning(self, "Play", "Failed to launch engine. See Logs tab.")
 
     def flush_queue(self) -> None:
         has_error = False
