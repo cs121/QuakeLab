@@ -35,6 +35,7 @@ from core.services.deploy_service import DeployService
 from core.services.launch_service import LaunchService
 from core.services.log_service import LogService
 from core.services.rebuild_service import RebuildService
+from core.services.validation_service import ValidationService
 from core.services.pack_service import PackService
 from core.services.preview_service import PreviewService
 from core.services.project_service import ProjectService
@@ -75,6 +76,7 @@ class MainWindow(QMainWindow):
         deploy_service: DeployService,
         launch_service: LaunchService,
         rebuild_service: RebuildService,
+        validation_service: ValidationService,
         watch_service: PollingWatchService,
         preview_service: PreviewService,
         log_service: LogService,
@@ -89,6 +91,7 @@ class MainWindow(QMainWindow):
         self.deploy = deploy_service
         self.launch = launch_service
         self.rebuild = rebuild_service
+        self.validation = validation_service
         self.watch = watch_service
         self.preview = preview_service
         self.logs = log_service
@@ -340,7 +343,30 @@ class MainWindow(QMainWindow):
         self._update_preview_context(path, "Source")
         if path.is_file():
             handler = self.preview.handler_for(path)
-            self._set_preview_widget(handler.create_widget(path))
+            preview_widget = handler.create_widget(path)
+            # Auto-validate shader files
+            if path.suffix.lower() == ".shader":
+                diags = self.validation.validate_shader_file(path)
+                if diags:
+                    container = QWidget()
+                    layout = QVBoxLayout(container)
+                    layout.setContentsMargins(0, 0, 0, 0)
+                    layout.addWidget(preview_widget, stretch=3)
+                    validation_label = QLabel(
+                        f"Validation: {len(diags)} issue(s) found"
+                    )
+                    validation_label.setStyleSheet("color: orange; font-weight: bold;")
+                    layout.addWidget(validation_label)
+                    val_table = QTableWidget(len(diags), 3)
+                    val_table.setHorizontalHeaderLabels(["Line", "Severity", "Message"])
+                    for i, d in enumerate(diags):
+                        val_table.setItem(i, 0, QTableWidgetItem(str(d.line)))
+                        val_table.setItem(i, 1, QTableWidgetItem(d.severity))
+                        val_table.setItem(i, 2, QTableWidgetItem(d.message))
+                    layout.addWidget(val_table, stretch=1)
+                    self._set_preview_widget(container)
+                    return
+            self._set_preview_widget(preview_widget)
 
     def _refresh_pak_tree(self, force: bool = False) -> None:
         pak_path = self.settings.pak_output_path().resolve()

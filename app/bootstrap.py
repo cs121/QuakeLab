@@ -16,6 +16,7 @@ from core.services.deploy_service import DeployService
 from core.services.launch_service import LaunchService
 from core.services.preview_service import PreviewService
 from core.services.rebuild_service import RebuildService
+from core.services.validation_service import ValidationService
 from core.services.log_service import LogService
 from infrastructure.db.database import Database
 from infrastructure.filesystem.watcher import PollingWatchService
@@ -43,6 +44,7 @@ def run() -> int:
     deploy_service = DeployService(settings_service, log_service)
     launch_service = LaunchService(settings_service, log_service)
     rebuild_service = RebuildService(settings_service, compiler, pack_service, deploy_service, log_service)
+    validation_service = ValidationService(settings_service)
     watcher = PollingWatchService(settings_service, journal, build_queue, resolver, log_service)
     preview_service = PreviewService()
 
@@ -56,6 +58,7 @@ def run() -> int:
         deploy_service=deploy_service,
         launch_service=launch_service,
         rebuild_service=rebuild_service,
+        validation_service=validation_service,
         watch_service=watcher,
         preview_service=preview_service,
         log_service=log_service,
