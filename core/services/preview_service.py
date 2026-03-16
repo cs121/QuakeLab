@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ui.viewers.bsp_viewer import BspPreviewHandler
 from ui.viewers.fallback_viewer import FallbackPreviewHandler
 from ui.viewers.glsl_viewer import GlslPreviewHandler
 from ui.viewers.image_viewer import ImagePreviewHandler
@@ -15,6 +16,7 @@ class PreviewService:
             ImagePreviewHandler(),
             WavPreviewHandler(),
             GlslPreviewHandler(),
+            BspPreviewHandler(),
             TextPreviewHandler(),
             FallbackPreviewHandler(),
         ]
