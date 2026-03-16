@@ -344,29 +344,41 @@ class MainWindow(QMainWindow):
         if path.is_file():
             handler = self.preview.handler_for(path)
             preview_widget = handler.create_widget(path)
-            # Auto-validate shader files
-            if path.suffix.lower() == ".shader":
+
+            # Auto-validate certain file types
+            diags = None
+            suffix = path.suffix.lower()
+            if suffix == ".shader":
                 diags = self.validation.validate_shader_file(path)
-                if diags:
-                    container = QWidget()
-                    layout = QVBoxLayout(container)
-                    layout.setContentsMargins(0, 0, 0, 0)
-                    layout.addWidget(preview_widget, stretch=3)
-                    validation_label = QLabel(
-                        f"Validation: {len(diags)} issue(s) found"
-                    )
-                    validation_label.setStyleSheet("color: orange; font-weight: bold;")
-                    layout.addWidget(validation_label)
-                    val_table = QTableWidget(len(diags), 3)
-                    val_table.setHorizontalHeaderLabels(["Line", "Severity", "Message"])
-                    for i, d in enumerate(diags):
-                        val_table.setItem(i, 0, QTableWidgetItem(str(d.line)))
-                        val_table.setItem(i, 1, QTableWidgetItem(d.severity))
-                        val_table.setItem(i, 2, QTableWidgetItem(d.message))
-                    layout.addWidget(val_table, stretch=1)
-                    self._set_preview_widget(container)
-                    return
-            self._set_preview_widget(preview_widget)
+            elif suffix == ".map":
+                diags = self.validation.validate_map_entities(path)
+
+            if diags:
+                self._set_preview_widget(
+                    self._wrap_with_validation(preview_widget, diags)
+                )
+            else:
+                self._set_preview_widget(preview_widget)
+
+    def _wrap_with_validation(
+        self, preview_widget: QWidget, diags: list
+    ) -> QWidget:
+        """Wrap a preview widget with a validation results table below it."""
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(preview_widget, stretch=3)
+        validation_label = QLabel(f"Validation: {len(diags)} issue(s) found")
+        validation_label.setStyleSheet("color: orange; font-weight: bold;")
+        layout.addWidget(validation_label)
+        val_table = QTableWidget(len(diags), 3)
+        val_table.setHorizontalHeaderLabels(["Line", "Severity", "Message"])
+        for i, d in enumerate(diags):
+            val_table.setItem(i, 0, QTableWidgetItem(str(d.line)))
+            val_table.setItem(i, 1, QTableWidgetItem(d.severity))
+            val_table.setItem(i, 2, QTableWidgetItem(d.message))
+        layout.addWidget(val_table, stretch=1)
+        return container
 
     def _refresh_pak_tree(self, force: bool = False) -> None:
         pak_path = self.settings.pak_output_path().resolve()
