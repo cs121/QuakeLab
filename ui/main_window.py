@@ -34,6 +34,7 @@ from core.services.compiler_service import CompilerService
 from core.services.deploy_service import DeployService
 from core.services.launch_service import LaunchService
 from core.services.log_service import LogService
+from core.services.rebuild_service import RebuildService
 from core.services.pack_service import PackService
 from core.services.preview_service import PreviewService
 from core.services.project_service import ProjectService
@@ -73,6 +74,7 @@ class MainWindow(QMainWindow):
         pack_service: PackService,
         deploy_service: DeployService,
         launch_service: LaunchService,
+        rebuild_service: RebuildService,
         watch_service: PollingWatchService,
         preview_service: PreviewService,
         log_service: LogService,
@@ -86,6 +88,7 @@ class MainWindow(QMainWindow):
         self.pack = pack_service
         self.deploy = deploy_service
         self.launch = launch_service
+        self.rebuild = rebuild_service
         self.watch = watch_service
         self.preview = preview_service
         self.logs = log_service
@@ -304,6 +307,10 @@ class MainWindow(QMainWindow):
         build_menu = self.menuBar().addMenu("Build")
         flush_action = build_menu.addAction("Flush Queue")
         flush_action.triggered.connect(self.flush_queue)
+        rebuild_action = build_menu.addAction("Rebuild All")
+        rebuild_action.triggered.connect(self._rebuild_all)
+        clean_action = build_menu.addAction("Clean Build Directory")
+        clean_action.triggered.connect(self._clean_build)
         build_menu.addSeparator()
         play_action = build_menu.addAction("Play")
         play_action.triggered.connect(self._launch_game)
@@ -461,6 +468,33 @@ class MainWindow(QMainWindow):
     def _build_line_callback(self, stream: str, text: str) -> None:
         """Thread-safe callback passed to streaming compiler methods."""
         self._line_bridge.line_received.emit(stream, text)
+
+    def _rebuild_all(self) -> None:
+        confirm = QMessageBox.question(
+            self, "Rebuild All",
+            "This will clean the build directory and rebuild everything. Continue?",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self.build_output.clear()
+        self.build_output.appendPlainText("=== Rebuild All ===")
+        result = self.rebuild.rebuild_all(on_line=self._build_line_callback)
+        self.build_output.appendPlainText(f"\n{result.summary()}")
+        if not result.ok:
+            QMessageBox.warning(self, "Rebuild", "Rebuild completed with errors. See Build Output.")
+
+    def _clean_build(self) -> None:
+        confirm = QMessageBox.question(
+            self, "Clean Build",
+            "This will delete all files in the build directory. Continue?",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        ok = self.rebuild.clean_build_dir()
+        if ok:
+            self.build_output.appendPlainText("[INFO] Build directory cleaned.")
+        else:
+            QMessageBox.warning(self, "Clean", "Failed to clean build directory. See Logs.")
 
     def _launch_game(self) -> None:
         exe = self.settings.get("engine_exe", "")
