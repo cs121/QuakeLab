@@ -8,6 +8,7 @@ from ui.viewers.glsl_viewer import GlslPreviewHandler
 from ui.viewers.image_viewer import ImagePreviewHandler
 from ui.viewers.qc_viewer import QcPreviewHandler
 from ui.viewers.text_viewer import TextPreviewHandler
+from ui.viewers.wad_viewer import WadPreviewHandler
 from ui.viewers.wav_viewer import WavPreviewHandler
 
 
@@ -19,6 +20,7 @@ class PreviewService:
             GlslPreviewHandler(),
             QcPreviewHandler(),
             BspPreviewHandler(),
+            WadPreviewHandler(),
             TextPreviewHandler(),
             FallbackPreviewHandler(),
         ]
