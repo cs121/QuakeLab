@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -19,12 +20,14 @@ from PySide6.QtWidgets import (
 )
 
 from core.services.settings_service import SettingsService
+from core.services.toolchain_check_service import ToolchainCheckService
 
 
 class SettingsDialog(QDialog):
     def __init__(self, settings: SettingsService, parent=None) -> None:
         super().__init__(parent)
         self.settings = settings
+        self._toolchain_checker = ToolchainCheckService(settings)
         self.setWindowTitle("QuakeLab Settings")
         self.resize(800, 500)
 
@@ -91,19 +94,54 @@ class SettingsDialog(QDialog):
         form.addRow("Engine EXE", self._with_browse_button(self.engine_exe, "Select Game Executable"))
         return w
 
+    def _with_status_indicator(self, edit: QLineEdit, title: str, settings_key: str, label: str) -> QWidget:
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(edit)
+        browse = QPushButton("Browse...")
+        browse.clicked.connect(lambda: self._select_file(edit, title))
+        layout.addWidget(browse)
+        indicator = QLabel()
+        indicator.setFixedWidth(20)
+        layout.addWidget(indicator)
+        self._tool_indicators.append((edit, settings_key, label, indicator))
+        # Update indicator when text changes
+        edit.textChanged.connect(lambda: self._refresh_tool_indicator(settings_key, label, indicator, edit.text()))
+        return row
+
+    def _refresh_tool_indicator(self, key: str, label: str, indicator: QLabel, path: str) -> None:
+        # Temporarily set the value to check it
+        old = self.settings.get(key, "")
+        self.settings.set(key, path)
+        status = self._toolchain_checker.check_tool(key, label)
+        self.settings.set(key, old)
+        if not path:
+            indicator.setText("")
+            indicator.setToolTip("Not configured")
+        elif status.ok:
+            indicator.setStyleSheet("color: green; font-weight: bold;")
+            indicator.setText("OK")
+            indicator.setToolTip(f"Found: {status.path}")
+        else:
+            indicator.setStyleSheet("color: red; font-weight: bold;")
+            indicator.setText("X")
+            indicator.setToolTip(f"Not found or not executable: {path}")
+
     def _toolchain_tab(self) -> QWidget:
         w = QWidget()
         form = QFormLayout(w)
+        self._tool_indicators: list[tuple[QLineEdit, str, str, QLabel]] = []
         self.qc_exe = QLineEdit(self.settings.get("qc_executable", ""))
         self.qc_args = QLineEdit(self.settings.get("qc_args", ""))
         self.qbsp_exe = QLineEdit(self.settings.get("qbsp_executable", ""))
         self.vis_exe = QLineEdit(self.settings.get("vis_executable", ""))
         self.light_exe = QLineEdit(self.settings.get("light_executable", ""))
-        form.addRow("QC Compiler", self._with_browse_button(self.qc_exe, "Select QC Compiler"))
+        form.addRow("QC Compiler", self._with_status_indicator(self.qc_exe, "Select QC Compiler", "qc_executable", "QC Compiler"))
         form.addRow("QC Args", self.qc_args)
-        form.addRow("QBSP", self._with_browse_button(self.qbsp_exe, "Select QBSP Executable"))
-        form.addRow("VIS", self._with_browse_button(self.vis_exe, "Select VIS Executable"))
-        form.addRow("LIGHT", self._with_browse_button(self.light_exe, "Select LIGHT Executable"))
+        form.addRow("QBSP", self._with_status_indicator(self.qbsp_exe, "Select QBSP Executable", "qbsp_executable", "QBSP"))
+        form.addRow("VIS", self._with_status_indicator(self.vis_exe, "Select VIS Executable", "vis_executable", "VIS"))
+        form.addRow("LIGHT", self._with_status_indicator(self.light_exe, "Select LIGHT Executable", "light_executable", "LIGHT"))
         return w
 
     def _build_tab(self) -> QWidget:
