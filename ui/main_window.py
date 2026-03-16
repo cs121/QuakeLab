@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QFileSystemModel,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QStatusBar,
@@ -39,6 +40,11 @@ from infrastructure.archives.pak import PakArchive, PakError
 from infrastructure.filesystem.watcher import PollingWatchService
 from ui.dialogs.settings_dialog import SettingsDialog
 from ui.panels.source_tree import SourceTreeView
+
+
+class _LineBridge(QObject):
+    """Thread-safe bridge: emits a Qt signal for each line from a background thread."""
+    line_received = Signal(str, str)  # (stream_name, text)
 
 
 def build_pak_tree(paths: list[tuple[str, int]]) -> dict[str, dict]:
@@ -164,9 +170,17 @@ class MainWindow(QMainWindow):
         self.error_table = QTableWidget(0, 4)
         self.error_table.setHorizontalHeaderLabels(["Time", "Level", "Source", "Message"])
 
+        self.build_output = QPlainTextEdit()
+        self.build_output.setReadOnly(True)
+        self.build_output.setMaximumBlockCount(5000)
+
+        self._line_bridge = _LineBridge()
+        self._line_bridge.line_received.connect(self._on_build_line)
+
         tabs = QTabWidget()
         tabs.addTab(self.change_table, "Change Journal")
         tabs.addTab(self.queue_table, "Build Queue")
+        tabs.addTab(self.build_output, "Build Output")
         tabs.addTab(self.log_table, "Logs")
         tabs.addTab(self.error_table, "Errors")
 
@@ -277,6 +291,13 @@ class MainWindow(QMainWindow):
         settings_action = menu.addAction("Settings")
         settings_action.triggered.connect(self.open_settings)
 
+        build_menu = self.menuBar().addMenu("Build")
+        flush_action = build_menu.addAction("Flush Queue")
+        flush_action.triggered.connect(self.flush_queue)
+        build_menu.addSeparator()
+        clear_output_action = build_menu.addAction("Clear Build Output")
+        clear_output_action.triggered.connect(self.build_output.clear)
+
     def _init_timer(self) -> None:
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self.refresh_tables)
@@ -380,6 +401,14 @@ class MainWindow(QMainWindow):
     def _auto_flush(self) -> None:
         if self.settings.get("auto_flush", "1") == "1":
             self.flush_queue()
+
+    def _on_build_line(self, stream: str, text: str) -> None:
+        prefix = "ERR" if stream == "stderr" else "   "
+        self.build_output.appendPlainText(f"[{prefix}] {text}")
+
+    def _build_line_callback(self, stream: str, text: str) -> None:
+        """Thread-safe callback passed to streaming compiler methods."""
+        self._line_bridge.line_received.emit(stream, text)
 
     def flush_queue(self) -> None:
         has_error = False
