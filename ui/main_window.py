@@ -4,7 +4,7 @@ from pathlib import Path
 import shutil
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
-from PySide6.QtGui import QStandardItem, QStandardItemModel
+from PySide6.QtGui import QKeySequence, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QFileDialog,
     QFileSystemModel,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from core.models.domain import BuildAction, CompilerDiagnostic
 from core.parsers.qc_error_parser import parse_diagnostics
+from core.services.build_profile_service import BuildProfileService
 from core.services.build_queue_service import BuildQueueService
 from core.services.change_journal_service import ChangeJournalService
 from core.services.compiler_service import CompilerService
@@ -45,6 +46,7 @@ from core.services.project_service import ProjectService
 from core.services.settings_service import SettingsService
 from infrastructure.archives.pak import PakArchive, PakError
 from infrastructure.filesystem.watcher import PollingWatchService
+from ui.dialogs.entity_browser_dialog import EntityBrowserDialog
 from ui.dialogs.settings_dialog import SettingsDialog
 from ui.panels.source_tree import SourceTreeView
 
@@ -82,6 +84,7 @@ class MainWindow(QMainWindow):
         validation_service: ValidationService,
         template_service: TemplateService,
         release_service: ReleaseService,
+        build_profile_service: BuildProfileService,
         watch_service: PollingWatchService,
         preview_service: PreviewService,
         log_service: LogService,
@@ -99,6 +102,7 @@ class MainWindow(QMainWindow):
         self.validation = validation_service
         self.templates = template_service
         self.release = release_service
+        self.build_profiles = build_profile_service
         self.watch = watch_service
         self.preview = preview_service
         self.logs = log_service
@@ -107,10 +111,13 @@ class MainWindow(QMainWindow):
         self._last_pak_signature: tuple[bool, int, int] | None = None
         self._diagnostics: list[CompilerDiagnostic] = []
 
-        self.setWindowTitle("QuakeLab Workbench V1")
+        self.setWindowTitle("QuakeLab Workbench V2")
         self.resize(1400, 900)
         self._build_ui()
         self._init_timer()
+        self._init_shortcuts()
+        # Deferred startup check (after event loop starts)
+        QTimer.singleShot(200, self._startup_check)
 
     def _build_ui(self) -> None:
         self._build_menu()
@@ -122,6 +129,8 @@ class MainWindow(QMainWindow):
         self.source_tree = SourceTreeView()
         self.source_tree.setModel(self.source_model)
         self.source_tree.clicked.connect(self._source_clicked)
+        self.source_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.source_tree.customContextMenuRequested.connect(self._source_context_menu)
 
         source_actions = QWidget()
         source_action_layout = QHBoxLayout(source_actions)
@@ -196,12 +205,13 @@ class MainWindow(QMainWindow):
         self._line_bridge = _LineBridge()
         self._line_bridge.line_received.connect(self._on_build_line)
 
-        tabs = QTabWidget()
-        tabs.addTab(self.change_table, "Change Journal")
-        tabs.addTab(self.queue_table, "Build Queue")
-        tabs.addTab(self.build_output, "Build Output")
-        tabs.addTab(self.log_table, "Logs")
-        tabs.addTab(self.error_table, "Errors")
+        self._tabs = QTabWidget()
+        self._tabs.addTab(self.change_table, "Change Journal")
+        self._tabs.addTab(self.queue_table, "Build Queue")
+        self._build_output_tab_idx = self._tabs.addTab(self.build_output, "Build Output")
+        self._tabs.addTab(self.log_table, "Logs")
+        self._errors_tab_idx = self._tabs.addTab(self.error_table, "Errors")
+        tabs = self._tabs
 
         self.main_splitter = QSplitter()
         self.main_splitter.setOrientation(Qt.Orientation.Vertical)
@@ -218,12 +228,37 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("Watcher idle")
         status.addWidget(self.status_label)
 
-        flush_btn = QPushButton("Flush Build Queue")
+        # Toolchain status indicators
+        self._tool_status_labels: dict[str, QLabel] = {}
+        for tool_key, short_name in [
+            ("qc_executable", "QC"),
+            ("qbsp_executable", "QBSP"),
+            ("vis_executable", "VIS"),
+            ("light_executable", "LIGHT"),
+            ("engine_exe", "Engine"),
+        ]:
+            lbl = QLabel(short_name)
+            lbl.setFixedWidth(46)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setStyleSheet("color: gray; font-size: 10px;")
+            lbl.setToolTip(f"{short_name}: not configured")
+            status.addPermanentWidget(lbl)
+            self._tool_status_labels[tool_key] = lbl
+
+        self._profile_label = QLabel("")
+        self._profile_label.setStyleSheet("font-size: 10px; color: #90CAF9;")
+        status.addPermanentWidget(self._profile_label)
+        self._refresh_profile_label()
+
+        flush_btn = QPushButton("Flush Queue")
         flush_btn.clicked.connect(self.flush_queue)
+        flush_btn.setShortcut(QKeySequence("Ctrl+Return"))
+        flush_btn.setToolTip("Flush Build Queue (Ctrl+Enter)")
         status.addPermanentWidget(flush_btn)
 
-        play_btn = QPushButton("Play")
+        play_btn = QPushButton("▶ Play")
         play_btn.clicked.connect(self._launch_game)
+        play_btn.setToolTip("Launch game engine (F5)")
         status.addPermanentWidget(play_btn)
         self.setStatusBar(status)
 
@@ -318,14 +353,16 @@ class MainWindow(QMainWindow):
         settings_action.triggered.connect(self.open_settings)
 
         build_menu = self.menuBar().addMenu("Build")
-        flush_action = build_menu.addAction("Flush Queue")
+        flush_action = build_menu.addAction("Flush Queue\tCtrl+Enter")
         flush_action.triggered.connect(self.flush_queue)
-        rebuild_action = build_menu.addAction("Rebuild All")
+        rebuild_action = build_menu.addAction("Rebuild All\tF5")
         rebuild_action.triggered.connect(self._rebuild_all)
         clean_action = build_menu.addAction("Clean Build Directory")
         clean_action.triggered.connect(self._clean_build)
+        batch_map_action = build_menu.addAction("Compile All Maps (Batch)")
+        batch_map_action.triggered.connect(self._compile_all_maps)
         build_menu.addSeparator()
-        play_action = build_menu.addAction("Play")
+        play_action = build_menu.addAction("Play\tF6")
         play_action.triggered.connect(self._launch_game)
         build_menu.addSeparator()
         release_action = build_menu.addAction("Create Release...")
@@ -333,6 +370,10 @@ class MainWindow(QMainWindow):
         build_menu.addSeparator()
         clear_output_action = build_menu.addAction("Clear Build Output")
         clear_output_action.triggered.connect(self.build_output.clear)
+
+        tools_menu = self.menuBar().addMenu("Tools")
+        entity_browser_action = tools_menu.addAction("Entity Browser\tCtrl+E")
+        entity_browser_action.triggered.connect(self._show_entity_browser)
 
     def _init_timer(self) -> None:
         self.refresh_timer = QTimer(self)
@@ -469,9 +510,11 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Template", f"Created {len(created)} file(s).")
 
     def open_settings(self) -> None:
-        dialog = SettingsDialog(self.settings, self)
+        dialog = SettingsDialog(self.settings, self, build_profile_service=self.build_profiles)
         if dialog.exec():
             self._refresh_tree_roots()
+            self._refresh_toolchain_status()
+            self._refresh_profile_label()
 
     def refresh_tables(self) -> None:
         self._fill_table(self.change_table, self.change_journal.latest())
@@ -525,6 +568,169 @@ class MainWindow(QMainWindow):
         if new_diags:
             self._diagnostics = new_diags
             self._fill_diagnostics_table()
+            self._update_errors_tab_title()
+            self._tabs.setCurrentIndex(self._errors_tab_idx)
+
+    def _init_shortcuts(self) -> None:
+        from PySide6.QtGui import QAction
+        rebuild_action = QAction("Rebuild All", self)
+        rebuild_action.setShortcut(QKeySequence("F5"))
+        rebuild_action.triggered.connect(self._rebuild_all)
+        self.addAction(rebuild_action)
+
+        flush_action = QAction("Flush Queue", self)
+        flush_action.setShortcut(QKeySequence("Ctrl+Return"))
+        flush_action.triggered.connect(self.flush_queue)
+        self.addAction(flush_action)
+
+        play_action = QAction("Play", self)
+        play_action.setShortcut(QKeySequence("F6"))
+        play_action.triggered.connect(self._launch_game)
+        self.addAction(play_action)
+
+        entity_action = QAction("Entity Browser", self)
+        entity_action.setShortcut(QKeySequence("Ctrl+E"))
+        entity_action.triggered.connect(self._show_entity_browser)
+        self.addAction(entity_action)
+
+    def _source_context_menu(self, pos) -> None:
+        """Right-click context menu for source tree items."""
+        index = self.source_tree.indexAt(pos)
+        if not index.isValid():
+            return
+        path = Path(self.source_model.filePath(index))
+        suffix = path.suffix.lower()
+
+        menu = QMenu(self)
+
+        if path.is_file():
+            if suffix in {".qc", ".src"}:
+                act = menu.addAction("Compile QC")
+                act.triggered.connect(
+                    lambda: self._manual_compile_qc()
+                )
+            elif suffix == ".map":
+                compile_act = menu.addAction("Compile Map")
+                compile_act.triggered.connect(
+                    lambda: self._manual_compile_map(path)
+                )
+                menu.addSeparator()
+                validate_act = menu.addAction("Validate Entities")
+                validate_act.triggered.connect(
+                    lambda: self._show_validation(path, "map")
+                )
+            elif suffix == ".shader":
+                validate_act = menu.addAction("Validate Shader")
+                validate_act.triggered.connect(
+                    lambda: self._show_validation(path, "shader")
+                )
+            elif suffix == ".bsp":
+                inspect_act = menu.addAction("Inspect BSP")
+                inspect_act.triggered.connect(
+                    lambda: self._source_clicked(index)
+                )
+            elif suffix == ".wad":
+                browse_act = menu.addAction("Browse Textures")
+                browse_act.triggered.connect(
+                    lambda: self._source_clicked(index)
+                )
+            elif suffix == ".pts":
+                pts_act = menu.addAction("View Leak Path")
+                pts_act.triggered.connect(
+                    lambda: self._source_clicked(index)
+                )
+
+        menu.addSeparator()
+        new_act = menu.addAction("New File/Folder...")
+        new_act.triggered.connect(self._create_source_entry)
+        rename_act = menu.addAction("Rename...")
+        rename_act.triggered.connect(self._rename_source_entry)
+        delete_act = menu.addAction("Delete")
+        delete_act.triggered.connect(self._delete_source_entry)
+
+        menu.exec(self.source_tree.viewport().mapToGlobal(pos))
+
+    def _manual_compile_qc(self) -> None:
+        self._tabs.setCurrentIndex(self._build_output_tab_idx)
+        self.build_output.appendPlainText("=== Compile QC ===")
+        result = self.compiler.compile_qc_streaming(
+            self.settings.source_root(), on_line=self._build_line_callback
+        )
+        if result is not None:
+            self._update_diagnostics_from_output(f"{result.stdout}\n{result.stderr}")
+            ok = result.code == 0
+        else:
+            ok = False
+        status = "OK" if ok else "FAILED"
+        self.build_output.appendPlainText(f"[{status}] QC compilation finished.")
+        if not ok:
+            self._tabs.setCurrentIndex(self._errors_tab_idx)
+
+    def _manual_compile_map(self, map_file: Path) -> None:
+        self._tabs.setCurrentIndex(self._build_output_tab_idx)
+        self.build_output.appendPlainText(f"=== Compile Map: {map_file.name} ===")
+        result = self.compiler.compile_map_streaming(
+            map_file, on_line=self._build_line_callback
+        )
+        if result is not None:
+            self._update_diagnostics_from_output(f"{result.stdout}\n{result.stderr}")
+            ok = result.code == 0
+        else:
+            ok = False
+        status = "OK" if ok else "FAILED"
+        self.build_output.appendPlainText(f"[{status}] Map compilation finished.")
+
+    def _show_validation(self, path: Path, kind: str) -> None:
+        if kind == "map":
+            diags = self.validation.validate_map_entities(path)
+        else:
+            diags = self.validation.validate_shader_file(path)
+        handler = self.preview.handler_for(path)
+        widget = handler.create_widget(path)
+        if diags:
+            self._set_preview_widget(self._wrap_with_validation(widget, diags))
+        else:
+            self._set_preview_widget(widget)
+            self.statusBar().showMessage(f"{path.name}: no issues found", 3000)
+        self._update_preview_context(path, "Validation")
+
+    def _refresh_toolchain_status(self) -> None:
+        """Update statusbar toolchain indicator colors."""
+        from core.services.toolchain_check_service import ToolchainCheckService
+        checker = ToolchainCheckService(self.settings)
+        for key, label in self._tool_status_labels.items():
+            status = checker.check_tool(key, key)
+            if not status.path:
+                label.setStyleSheet("color: gray; font-size: 10px;")
+                label.setToolTip(f"{key}: not configured")
+            elif status.ok:
+                label.setStyleSheet("color: #4CAF50; font-weight: bold; font-size: 10px;")
+                label.setToolTip(f"{key}: {status.path}")
+            else:
+                label.setStyleSheet("color: #F44336; font-weight: bold; font-size: 10px;")
+                label.setToolTip(f"{key}: not found at {status.path}")
+
+    def _startup_check(self) -> None:
+        """Run toolchain checks after startup; warn if critical tools are missing."""
+        from core.services.toolchain_check_service import ToolchainCheckService
+        self._refresh_toolchain_status()
+        checker = ToolchainCheckService(self.settings)
+        critical = [("qc_executable", "QC Compiler"), ("qbsp_executable", "QBSP")]
+        missing = [label for key, label in critical if not checker.check_tool(key, label).ok]
+        if missing:
+            tools_str = ", ".join(missing)
+            self.statusBar().showMessage(
+                f"Warning: tools not configured: {tools_str} — open Settings to fix", 8000
+            )
+
+    def _refresh_profile_label(self) -> None:
+        name = self.settings.get("active_build_profile", "")
+        self._profile_label.setText(f"Profile: {name}" if name else "")
+
+    def _update_errors_tab_title(self) -> None:
+        count = len(self._diagnostics)
+        title = f"Errors ({count})" if count else "Errors"
+        self._tabs.setTabText(self._errors_tab_idx, title)
 
     def _auto_flush(self) -> None:
         if self.settings.get("auto_flush", "1") == "1":
@@ -545,12 +751,30 @@ class MainWindow(QMainWindow):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
+        self._tabs.setCurrentIndex(self._build_output_tab_idx)
         self.build_output.clear()
         self.build_output.appendPlainText("=== Rebuild All ===")
         result = self.rebuild.rebuild_all(on_line=self._build_line_callback)
         self.build_output.appendPlainText(f"\n{result.summary()}")
         if not result.ok:
             QMessageBox.warning(self, "Rebuild", "Rebuild completed with errors. See Build Output.")
+
+    def _compile_all_maps(self) -> None:
+        self._tabs.setCurrentIndex(self._build_output_tab_idx)
+        self.build_output.appendPlainText("=== Compile All Maps (Batch) ===")
+        results = self.compiler.compile_all_maps_streaming(on_line=self._build_line_callback)
+        if not results:
+            self.build_output.appendPlainText("[INFO] No .map files found.")
+            return
+        failed = [name for name, ok in results if not ok]
+        total = len(results)
+        ok_count = total - len(failed)
+        self.build_output.appendPlainText(
+            f"\n[BATCH] {ok_count}/{total} maps compiled successfully."
+        )
+        if failed:
+            self.build_output.appendPlainText(f"[BATCH] Failed: {', '.join(failed)}")
+            QMessageBox.warning(self, "Batch Compile", f"{len(failed)} map(s) failed. See Build Output.")
 
     def _clean_build(self) -> None:
         confirm = QMessageBox.question(
@@ -577,6 +801,11 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "Release", "Failed to create release. See Logs.")
 
+    def _show_entity_browser(self) -> None:
+        entity_path = self.settings.get("entity_def_path", "")
+        dialog = EntityBrowserDialog(entity_path, self)
+        dialog.exec()
+
     def _launch_game(self) -> None:
         exe = self.settings.get("engine_exe", "")
         if not exe:
@@ -588,10 +817,14 @@ class MainWindow(QMainWindow):
 
     def flush_queue(self) -> None:
         has_error = False
+        first = True
         while True:
             action = self.build_queue.pop_pending()
             if not action:
                 break
+            if first:
+                self._tabs.setCurrentIndex(self._build_output_tab_idx)
+                first = False
             ok = self._execute_action(action)
             if ok:
                 self.build_queue.mark_done(action)

@@ -19,15 +19,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.services.build_profile_service import BuildProfileService
 from core.services.settings_service import SettingsService
 from core.services.toolchain_check_service import ToolchainCheckService
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, settings: SettingsService, parent=None) -> None:
+    def __init__(self, settings: SettingsService, parent=None, build_profile_service: BuildProfileService | None = None) -> None:
         super().__init__(parent)
         self.settings = settings
         self._toolchain_checker = ToolchainCheckService(settings)
+        self._profile_service = build_profile_service
         self.setWindowTitle("QuakeLab Settings")
         self.resize(800, 500)
 
@@ -130,7 +132,8 @@ class SettingsDialog(QDialog):
 
     def _toolchain_tab(self) -> QWidget:
         w = QWidget()
-        form = QFormLayout(w)
+        layout = QVBoxLayout(w)
+        form = QFormLayout()
         self._tool_indicators: list[tuple[QLineEdit, str, str, QLabel]] = []
         self.qc_exe = QLineEdit(self.settings.get("qc_executable", ""))
         self.qc_args = QLineEdit(self.settings.get("qc_args", ""))
@@ -142,11 +145,61 @@ class SettingsDialog(QDialog):
         form.addRow("QBSP", self._with_status_indicator(self.qbsp_exe, "Select QBSP Executable", "qbsp_executable", "QBSP"))
         form.addRow("VIS", self._with_status_indicator(self.vis_exe, "Select VIS Executable", "vis_executable", "VIS"))
         form.addRow("LIGHT", self._with_status_indicator(self.light_exe, "Select LIGHT Executable", "light_executable", "LIGHT"))
+        layout.addLayout(form)
+
+        auto_detect_btn = QPushButton("Auto-Detect All")
+        auto_detect_btn.setToolTip("Search PATH and common directories for Quake tools")
+        auto_detect_btn.clicked.connect(self._auto_detect_tools)
+        layout.addWidget(auto_detect_btn)
+        layout.addStretch(1)
         return w
+
+    def _auto_detect_tools(self) -> None:
+        found = self._toolchain_checker.auto_detect_tools()
+        if not found:
+            QMessageBox.information(self, "Auto-Detect", "No tools found on this system.")
+            return
+        field_map = {
+            "qc_executable": self.qc_exe,
+            "qbsp_executable": self.qbsp_exe,
+            "vis_executable": self.vis_exe,
+            "light_executable": self.light_exe,
+            "engine_exe": self.engine_exe,
+        }
+        applied = []
+        for key, path in found.items():
+            edit = field_map.get(key)
+            if edit and not edit.text():
+                edit.setText(path)
+                applied.append(key)
+        if applied:
+            QMessageBox.information(
+                self, "Auto-Detect", f"Found {len(applied)} tool(s):\n" + "\n".join(applied)
+            )
+        else:
+            QMessageBox.information(self, "Auto-Detect", "All tool fields already populated.")
 
     def _build_tab(self) -> QWidget:
         w = QWidget()
-        form = QFormLayout(w)
+        layout = QVBoxLayout(w)
+        form = QFormLayout()
+
+        # Build profile selector
+        if self._profile_service:
+            profile_row = QWidget()
+            profile_layout = QHBoxLayout(profile_row)
+            profile_layout.setContentsMargins(0, 0, 0, 0)
+            self._profile_combo = QComboBox()
+            self._refresh_profile_combo()
+            self._profile_combo.currentTextChanged.connect(self._on_profile_selected)
+            profile_layout.addWidget(self._profile_combo)
+            save_profile_btn = QPushButton("Save as Profile...")
+            save_profile_btn.clicked.connect(self._save_as_profile)
+            profile_layout.addWidget(save_profile_btn)
+            form.addRow("Build Profile", profile_row)
+        else:
+            self._profile_combo = None
+
         self.auto_watch = QCheckBox()
         self.auto_watch.setChecked(self.settings.get("auto_watch", "1") == "1")
         self.auto_flush = QCheckBox()
@@ -168,7 +221,53 @@ class SettingsDialog(QDialog):
         form.addRow("Pack after build", self.pack_after_build)
         form.addRow("Deploy after build", self.deploy_after_build)
         form.addRow("Map Build Mode", self.map_mode)
+        layout.addLayout(form)
+        layout.addStretch(1)
         return w
+
+    def _refresh_profile_combo(self) -> None:
+        if not self._profile_combo or not self._profile_service:
+            return
+        self._profile_combo.blockSignals(True)
+        self._profile_combo.clear()
+        self._profile_combo.addItem("")  # no profile
+        for p in self._profile_service.list_profiles():
+            self._profile_combo.addItem(p.name)
+        active = self.settings.get("active_build_profile", "")
+        idx = self._profile_combo.findText(active)
+        if idx >= 0:
+            self._profile_combo.setCurrentIndex(idx)
+        self._profile_combo.blockSignals(False)
+
+    def _on_profile_selected(self, name: str) -> None:
+        if not name or not self._profile_service:
+            return
+        profile = self._profile_service.get_profile(name)
+        if not profile:
+            return
+        self.qc_args.setText(profile.qc_args)
+        self.map_mode.setCurrentText(profile.map_build_mode)
+
+    def _save_as_profile(self) -> None:
+        if not self._profile_service:
+            return
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "Save Build Profile", "Profile name:")
+        if not ok or not name.strip():
+            return
+        from core.services.build_profile_service import BuildProfile
+        profile = BuildProfile(
+            id=0,
+            name=name.strip(),
+            qc_args=self.qc_args.text(),
+            qbsp_args="",
+            vis_args="",
+            light_args="",
+            map_build_mode=self.map_mode.currentText(),
+        )
+        self._profile_service.save_profile(profile)
+        self._refresh_profile_combo()
+        self._profile_combo.setCurrentText(name.strip())
 
     def _save(self) -> None:
         self.settings.set("source_root", self.source_root.text())

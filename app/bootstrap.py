@@ -10,6 +10,7 @@ from core.services.settings_service import SettingsService
 from core.services.change_journal_service import ChangeJournalService
 from core.services.build_queue_service import BuildQueueService
 from core.services.task_resolver_service import TaskResolverService
+from core.services.build_profile_service import BuildProfileService
 from core.services.compiler_service import CompilerService
 from core.services.pack_service import PackService
 from core.services.deploy_service import DeployService
@@ -49,6 +50,7 @@ def run() -> int:
     validation_service = ValidationService(settings_service)
     release_service = ReleaseService(settings_service, log_service)
     template_service = TemplateService()
+    build_profile_service = BuildProfileService(db)
     watcher = PollingWatchService(settings_service, journal, build_queue, resolver, log_service)
     preview_service = PreviewService()
 
@@ -65,6 +67,7 @@ def run() -> int:
         validation_service=validation_service,
         template_service=template_service,
         release_service=release_service,
+        build_profile_service=build_profile_service,
         watch_service=watcher,
         preview_service=preview_service,
         log_service=log_service,

@@ -51,3 +51,43 @@ class ToolchainCheckService:
 
     def check_all(self) -> list[ToolStatus]:
         return [self.check_tool(key, label) for key, label in _TOOL_KEYS]
+
+    def auto_detect_tools(self) -> dict[str, str]:
+        """Try to find common Quake tool executables via PATH and known directories.
+
+        Returns a dict mapping setting keys to found executable paths.
+        """
+        _CANDIDATES: dict[str, list[str]] = {
+            "qc_executable": ["fteqcc", "fteqcc64", "gmqcc"],
+            "qbsp_executable": ["qbsp", "tyrqbsp", "ericw-qbsp"],
+            "vis_executable": ["vis", "tyrvis", "ericw-vis"],
+            "light_executable": ["light", "tyrlight", "ericw-light"],
+            "engine_exe": [
+                "quakespasm", "quakespasm-sdl2", "vkquake",
+                "ironwail", "quake", "darkplaces",
+            ],
+        }
+
+        extra_dirs = [
+            Path.home() / "quake" / "tools",
+            Path.home() / "tools",
+            Path.home() / ".local" / "bin",
+            Path("/usr/local/bin"),
+            Path("/usr/bin"),
+        ]
+
+        found: dict[str, str] = {}
+        for key, names in _CANDIDATES.items():
+            for name in names:
+                resolved = shutil.which(name)
+                if resolved:
+                    found[key] = resolved
+                    break
+                for d in extra_dirs:
+                    candidate = d / name
+                    if candidate.exists() and os.access(candidate, os.X_OK):
+                        found[key] = str(candidate)
+                        break
+                if key in found:
+                    break
+        return found

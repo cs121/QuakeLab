@@ -96,4 +96,34 @@ class CompilerService:
             result = self._run_tool_streaming(
                 "LIGHT", "light_executable", "light_args", "light_cwd", [str(map_file)], on_line
             )
+        # Check for leak pointfile after QBSP
+        bsp_path = map_file.with_suffix(".bsp")
+        pts_path = map_file.with_suffix(".pts")
+        if pts_path.exists() and on_line:
+            on_line("stderr", f"Leak detected! Pointfile: {pts_path}")
         return result
+
+    # --- batch compilation ---------------------------------------------------
+
+    def compile_all_maps(self) -> list[tuple[str, bool]]:
+        """Compile all .map files found in source_root. Returns list of (name, ok)."""
+        source_root = self.settings.source_root()
+        results: list[tuple[str, bool]] = []
+        for map_file in sorted(source_root.rglob("*.map")):
+            ok = self.compile_map(map_file)
+            results.append((map_file.name, ok))
+        return results
+
+    def compile_all_maps_streaming(
+        self, on_line: Callable[[str, str], None] | None = None
+    ) -> list[tuple[str, bool]]:
+        """Compile all .map files with streaming output. Returns list of (name, ok)."""
+        source_root = self.settings.source_root()
+        results: list[tuple[str, bool]] = []
+        for map_file in sorted(source_root.rglob("*.map")):
+            if on_line:
+                on_line("stdout", f"--- Compiling: {map_file.name} ---")
+            result = self.compile_map_streaming(map_file, on_line)
+            ok = result is not None and result.code == 0
+            results.append((map_file.name, ok))
+        return results

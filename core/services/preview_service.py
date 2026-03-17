@@ -6,6 +6,7 @@ from ui.viewers.bsp_viewer import BspPreviewHandler
 from ui.viewers.fallback_viewer import FallbackPreviewHandler
 from ui.viewers.glsl_viewer import GlslPreviewHandler
 from ui.viewers.image_viewer import ImagePreviewHandler
+from ui.viewers.pointfile_viewer import PointfilePreviewHandler
 from ui.viewers.qc_viewer import QcPreviewHandler
 from ui.viewers.text_viewer import TextPreviewHandler
 from ui.viewers.wad_viewer import WadPreviewHandler
@@ -21,6 +22,7 @@ class PreviewService:
             QcPreviewHandler(),
             BspPreviewHandler(),
             WadPreviewHandler(),
+            PointfilePreviewHandler(),
             TextPreviewHandler(),
             FallbackPreviewHandler(),
         ]

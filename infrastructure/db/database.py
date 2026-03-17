@@ -66,6 +66,16 @@ CREATE TABLE IF NOT EXISTS file_state (
     mtime REAL,
     last_seen TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS build_profiles (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    qc_args TEXT DEFAULT '',
+    qbsp_args TEXT DEFAULT '',
+    vis_args TEXT DEFAULT '',
+    light_args TEXT DEFAULT '',
+    map_build_mode TEXT DEFAULT 'fast'
+);
 """
 
 
@@ -106,6 +116,16 @@ class Database:
             self.conn.execute(
                 "INSERT OR IGNORE INTO projects(id, name, root_path) VALUES(1, ?, ?)",
                 ("QuakeLab", str(self.path.parent.parent)),
+            )
+            self.conn.execute(
+                "INSERT OR IGNORE INTO build_profiles(name, qc_args, qbsp_args, vis_args, light_args, map_build_mode) "
+                "VALUES(?, ?, ?, ?, ?, ?)",
+                ("Debug", "-Wall", "", "", "", "fast"),
+            )
+            self.conn.execute(
+                "INSERT OR IGNORE INTO build_profiles(name, qc_args, qbsp_args, vis_args, light_args, map_build_mode) "
+                "VALUES(?, ?, ?, ?, ?, ?)",
+                ("Release", "", "", "", "", "full"),
             )
             self.conn.commit()
 
