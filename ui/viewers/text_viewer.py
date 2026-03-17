@@ -14,9 +14,12 @@ from PySide6.QtWidgets import (
 
 from ui.viewers.base import PreviewHandler
 
+# Extensions that get QuakeC syntax highlighting
+_QC_EXTS = {".qc", ".qh"}
+
 
 class EditableTextWidget(QWidget):
-    """Text editor with save button and unsaved-changes indicator."""
+    """Text editor with syntax highlighting (optional), save button and dirty indicator."""
 
     def __init__(self, path: Path, parent=None) -> None:
         super().__init__(parent)
@@ -25,6 +28,16 @@ class EditableTextWidget(QWidget):
 
         self._editor = QPlainTextEdit()
         self._editor.setPlainText(path.read_text(encoding="utf-8", errors="replace"))
+
+        # Apply syntax highlighter for known languages
+        ext = path.suffix.lower()
+        if ext in _QC_EXTS:
+            from ui.syntax.qc_highlighter import QcHighlighter
+            QcHighlighter(self._editor.document())
+        elif ext in {".glsl", ".vert", ".frag"}:
+            from ui.syntax.glsl_highlighter import GlslHighlighter
+            GlslHighlighter(self._editor.document())
+
         self._editor.textChanged.connect(self._mark_dirty)
 
         self._status = QLabel("")
@@ -59,7 +72,7 @@ class EditableTextWidget(QWidget):
         except OSError as exc:
             QMessageBox.warning(self, "Save", f"Could not save file:\n{exc}")
 
-    # Allow external code to access the underlying editor (e.g. for cursor positioning)
+    # Allow external code to access underlying editor (e.g. cursor positioning)
     def document(self):
         return self._editor.document()
 
@@ -71,7 +84,7 @@ class EditableTextWidget(QWidget):
 
 
 class TextPreviewHandler(PreviewHandler):
-    exts = {".qc", ".txt", ".cfg", ".shader", ".map", ".src", ".md"}
+    exts = {".qc", ".qh", ".txt", ".cfg", ".shader", ".map", ".src", ".md", ".ent"}
 
     def can_handle(self, path: Path) -> bool:
         return path.suffix.lower() in self.exts

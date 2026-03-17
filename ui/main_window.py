@@ -362,6 +362,9 @@ class MainWindow(QMainWindow):
         menu = self.menuBar().addMenu("Project")
         settings_action = menu.addAction("Settings")
         settings_action.triggered.connect(self.open_settings)
+        menu.addSeparator()
+        qc_source_action = menu.addAction("QuakeC Source…")
+        qc_source_action.triggered.connect(self._open_qc_source_dialog)
 
         build_menu = self.menuBar().addMenu("Build")
         flush_action = build_menu.addAction("Flush Queue")
@@ -383,6 +386,11 @@ class MainWindow(QMainWindow):
         for tpl in BUILTIN_TEMPLATES:
             action = template_menu.addAction(f"{tpl.name} – {tpl.description}")
             action.triggered.connect(lambda checked, t=tpl.name: self._set_build_template(t))
+
+    def _open_qc_source_dialog(self) -> None:
+        from ui.dialogs.qc_source_dialog import QcSourceDialog
+        dlg = QcSourceDialog(self.settings, parent=self)
+        dlg.exec()
 
     def _set_build_template(self, template_name: str) -> None:
         self.settings.set("build_template", template_name)

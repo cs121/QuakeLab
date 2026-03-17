@@ -1,3 +1,4 @@
+"""Quake LMP file viewer (palette-indexed images and palette files)."""
 from __future__ import annotations
 
 import struct
@@ -7,54 +8,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
+from infrastructure.formats.palette import load_palette, palette_to_qimage_data
 from ui.viewers.base import PreviewHandler
 
 
-def _load_palette(source_root: Path | None) -> list[tuple[int, int, int]]:
-    """Load a 256-color Quake palette.
-
-    Searches for palette.lmp in the source root (gfx/palette.lmp or palette.lmp).
-    Falls back to a 6x6x6 color cube + grayscale ramp as a rough approximation.
-    """
-    if source_root:
-        for candidate in [source_root / "gfx" / "palette.lmp", source_root / "palette.lmp"]:
-            if candidate.is_file():
-                data = candidate.read_bytes()
-                if len(data) >= 768:
-                    return [(data[i * 3], data[i * 3 + 1], data[i * 3 + 2]) for i in range(256)]
-
-    # Fallback: 6x6x6 color cube (216 entries) + 40 grayscale steps
-    palette: list[tuple[int, int, int]] = []
-    for r in range(6):
-        for g in range(6):
-            for b in range(6):
-                palette.append((r * 51, g * 51, b * 51))
-    for i in range(40):
-        v = min(255, i * 6)
-        palette.append((v, v, v))
-    while len(palette) < 256:
-        palette.append((0, 0, 0))
-    return palette
-
-
-def _render_lmp_image(
-    width: int,
-    height: int,
-    pixels: bytes,
-    palette: list[tuple[int, int, int]],
-) -> QImage:
-    """Render a palette-indexed LMP image to a QImage (RGB32)."""
-    img = QImage(width, height, QImage.Format.Format_RGB32)
-    for y in range(height):
-        for x in range(width):
-            idx = pixels[y * width + x]
-            r, g, b = palette[idx]
-            img.setPixel(x, y, (0xFF << 24) | (r << 16) | (g << 8) | b)
-    return img
-
-
 def _render_palette_swatches(palette: list[tuple[int, int, int]]) -> QImage:
-    """Render a 16x16 grid of palette swatches (one per color)."""
+    """16 × 16 grid of colour swatches, one per palette entry."""
     cell = 16
     img = QImage(16 * cell, 16 * cell, QImage.Format.Format_RGB32)
     for i, (r, g, b) in enumerate(palette):
@@ -70,7 +29,6 @@ class LmpPreviewHandler(PreviewHandler):
     exts = {".lmp"}
 
     def __init__(self, settings=None) -> None:
-        # settings may be None; used only to resolve source_root for palette.lmp lookup
         self._settings = settings
 
     def can_handle(self, path: Path) -> bool:
@@ -87,30 +45,32 @@ class LmpPreviewHandler(PreviewHandler):
             except Exception:
                 pass
 
-        palette = _load_palette(source_root)
-        palette_source = "project palette.lmp" if source_root and (
+        palette = load_palette(source_root)
+        has_project_palette = source_root is not None and (
             (source_root / "gfx" / "palette.lmp").is_file()
             or (source_root / "palette.lmp").is_file()
-        ) else "built-in fallback palette"
+        )
+        palette_source = "project palette.lmp" if has_project_palette else "built-in fallback palette"
 
         data = path.read_bytes()
         file_size = len(data)
 
-        # Detect palette.lmp itself: exactly 768 bytes, no image header needed
+        # palette.lmp itself: exactly 768 bytes (256 × RGB)
         if file_size == 768:
-            meta = QLabel(f"Palette file (256 colors) · {file_size} bytes")
+            meta = QLabel(f"Palette file · 256 colours · {file_size} bytes")
             layout.addWidget(meta)
-            img = _render_palette_swatches([(data[i * 3], data[i * 3 + 1], data[i * 3 + 2]) for i in range(256)])
-            label = QLabel()
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label.setPixmap(QPixmap.fromImage(img))
+            pal = [(data[i * 3], data[i * 3 + 1], data[i * 3 + 2]) for i in range(256)]
+            img = _render_palette_swatches(pal)
+            lbl = QLabel()
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setPixmap(QPixmap.fromImage(img))
             area = QScrollArea()
             area.setWidgetResizable(True)
-            area.setWidget(label)
+            area.setWidget(lbl)
             layout.addWidget(area)
             return root
 
-        # Generic LMP image: 4-byte width + 4-byte height + pixel data
+        # Generic LMP image: int32 width + int32 height + pixel data
         if file_size < 8:
             layout.addWidget(QLabel(f"LMP file too small to parse ({file_size} bytes)"))
             return root
@@ -121,26 +81,24 @@ class LmpPreviewHandler(PreviewHandler):
         if width <= 0 or height <= 0 or pixel_count > 4_000_000 or 8 + pixel_count > file_size:
             layout.addWidget(QLabel(
                 f"Cannot parse LMP as image (w={width}, h={height}, file={file_size} bytes).\n"
-                "File may be a raw data lump without an image header."
+                "File may be a raw data lump without a standard image header."
             ))
             hex_preview = " ".join(f"{b:02x}" for b in data[:64])
             layout.addWidget(QLabel(f"First 64 bytes:\n{hex_preview}"))
             return root
 
         pixels = data[8: 8 + pixel_count]
-        img = _render_lmp_image(width, height, pixels, palette)
+        raw = palette_to_qimage_data(pixels, width, height, palette)
+        img = QImage(raw, width, height, width * 4, QImage.Format.Format_ARGB32)
 
-        meta = QLabel(
-            f"{width} × {height} px · {file_size} bytes · palette: {palette_source}"
-        )
+        meta = QLabel(f"{width} × {height} px · {file_size} bytes · palette: {palette_source}")
         layout.addWidget(meta)
 
-        label = QLabel()
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setPixmap(QPixmap.fromImage(img))
-
+        lbl = QLabel()
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl.setPixmap(QPixmap.fromImage(img))
         area = QScrollArea()
         area.setWidgetResizable(True)
-        area.setWidget(label)
+        area.setWidget(lbl)
         layout.addWidget(area)
         return root
