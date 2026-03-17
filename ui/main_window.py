@@ -378,7 +378,7 @@ class MainWindow(QMainWindow):
         play_action.triggered.connect(self._launch_game)
         build_menu.addSeparator()
         clear_output_action = build_menu.addAction("Clear Build Output")
-        clear_output_action.triggered.connect(self.build_output.clear)
+        clear_output_action.triggered.connect(lambda: self.build_output.clear())
 
         # Build template quick-select sub-menu
         from core.models.domain import BUILTIN_TEMPLATES
