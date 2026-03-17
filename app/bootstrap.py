@@ -16,6 +16,7 @@ from core.services.deploy_service import DeployService
 from core.services.launch_service import LaunchService
 from core.services.preview_service import PreviewService
 from core.services.rebuild_service import RebuildService
+from core.services.tool_download_service import ToolDownloadService
 from core.services.validation_service import ValidationService
 from core.services.log_service import LogService
 from infrastructure.db.database import Database
@@ -45,8 +46,9 @@ def run() -> int:
     launch_service = LaunchService(settings_service, log_service)
     rebuild_service = RebuildService(settings_service, compiler, pack_service, deploy_service, log_service)
     validation_service = ValidationService(settings_service)
+    tool_download_service = ToolDownloadService(settings_service, log_service)
     watcher = PollingWatchService(settings_service, journal, build_queue, resolver, log_service)
-    preview_service = PreviewService()
+    preview_service = PreviewService(settings=settings_service)
 
     window = MainWindow(
         project_service=project_service,
@@ -62,6 +64,7 @@ def run() -> int:
         watch_service=watcher,
         preview_service=preview_service,
         log_service=log_service,
+        tool_download_service=tool_download_service,
     )
     window.show()
     watcher.start()

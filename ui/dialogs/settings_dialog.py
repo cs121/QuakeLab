@@ -15,26 +15,30 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QTabWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
+from core.models.domain import BUILTIN_TEMPLATES
 from core.services.settings_service import SettingsService
 from core.services.toolchain_check_service import ToolchainCheckService
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, settings: SettingsService, parent=None) -> None:
+    def __init__(self, settings: SettingsService, tool_download_service=None, parent=None) -> None:
         super().__init__(parent)
         self.settings = settings
         self._toolchain_checker = ToolchainCheckService(settings)
+        self._tool_download_service = tool_download_service
         self.setWindowTitle("QuakeLab Settings")
-        self.resize(800, 500)
+        self.resize(860, 560)
 
         tabs = QTabWidget()
         tabs.addTab(self._project_tab(), "Project")
         tabs.addTab(self._toolchain_tab(), "Toolchains")
         tabs.addTab(self._build_tab(), "Build")
+        tabs.addTab(self._templates_tab(), "Build Templates")
 
         save = QPushButton("Save")
         save.clicked.connect(self._save)
@@ -106,12 +110,10 @@ class SettingsDialog(QDialog):
         indicator.setFixedWidth(20)
         layout.addWidget(indicator)
         self._tool_indicators.append((edit, settings_key, label, indicator))
-        # Update indicator when text changes
         edit.textChanged.connect(lambda: self._refresh_tool_indicator(settings_key, label, indicator, edit.text()))
         return row
 
     def _refresh_tool_indicator(self, key: str, label: str, indicator: QLabel, path: str) -> None:
-        # Temporarily set the value to check it
         old = self.settings.get(key, "")
         self.settings.set(key, path)
         status = self._toolchain_checker.check_tool(key, label)
@@ -137,11 +139,19 @@ class SettingsDialog(QDialog):
         self.qbsp_exe = QLineEdit(self.settings.get("qbsp_executable", ""))
         self.vis_exe = QLineEdit(self.settings.get("vis_executable", ""))
         self.light_exe = QLineEdit(self.settings.get("light_executable", ""))
+        self.trenchbroom_exe = QLineEdit(self.settings.get("trenchbroom_exe", ""))
         form.addRow("QC Compiler", self._with_status_indicator(self.qc_exe, "Select QC Compiler", "qc_executable", "QC Compiler"))
         form.addRow("QC Args", self.qc_args)
         form.addRow("QBSP", self._with_status_indicator(self.qbsp_exe, "Select QBSP Executable", "qbsp_executable", "QBSP"))
         form.addRow("VIS", self._with_status_indicator(self.vis_exe, "Select VIS Executable", "vis_executable", "VIS"))
         form.addRow("LIGHT", self._with_status_indicator(self.light_exe, "Select LIGHT Executable", "light_executable", "LIGHT"))
+        form.addRow("TrenchBroom", self._with_status_indicator(self.trenchbroom_exe, "Select TrenchBroom Executable", "trenchbroom_exe", "TrenchBroom"))
+
+        if self._tool_download_service is not None:
+            dl_btn = QPushButton("Download Tools…")
+            dl_btn.clicked.connect(self._open_download_dialog)
+            form.addRow("", dl_btn)
+
         return w
 
     def _build_tab(self) -> QWidget:
@@ -167,8 +177,73 @@ class SettingsDialog(QDialog):
         form.addRow("Flush Interval (minutes)", self.flush_minutes)
         form.addRow("Pack after build", self.pack_after_build)
         form.addRow("Deploy after build", self.deploy_after_build)
-        form.addRow("Map Build Mode", self.map_mode)
+        form.addRow("Map Build Mode (legacy)", self.map_mode)
         return w
+
+    def _templates_tab(self) -> QWidget:
+        w = QWidget()
+        layout = QVBoxLayout(w)
+
+        # Active template selector
+        selector_row = QWidget()
+        selector_layout = QHBoxLayout(selector_row)
+        selector_layout.setContentsMargins(0, 0, 0, 0)
+        selector_layout.addWidget(QLabel("Active template:"))
+        self.template_selector = QComboBox()
+        for tpl in BUILTIN_TEMPLATES:
+            self.template_selector.addItem(tpl.name)
+        active = self.settings.get("build_template", "fast")
+        self.template_selector.setCurrentText(active)
+        selector_layout.addWidget(self.template_selector)
+        self.template_desc = QLabel()
+        self.template_desc.setStyleSheet("color: gray;")
+        selector_layout.addWidget(self.template_desc, stretch=1)
+        layout.addWidget(selector_row)
+
+        # Description of builtin templates
+        desc_lines = [f"  <b>{t.name}</b>: {t.description}" for t in BUILTIN_TEMPLATES]
+        desc_label = QLabel("<br>".join(desc_lines))
+        desc_label.setWordWrap(True)
+        layout.addWidget(desc_label)
+
+        # Custom template args
+        custom_group = QWidget()
+        custom_form = QFormLayout(custom_group)
+        custom_form.setContentsMargins(0, 8, 0, 0)
+        self.custom_qbsp_args = QLineEdit(self.settings.get("template_qbsp_args", ""))
+        self.custom_vis_args = QLineEdit(self.settings.get("template_vis_args", ""))
+        self.custom_light_args = QLineEdit(self.settings.get("template_light_args", ""))
+        self.custom_skip_vis = QCheckBox("Skip VIS")
+        self.custom_skip_vis.setChecked(self.settings.get("template_skip_vis", "0") == "1")
+        self.custom_skip_light = QCheckBox("Skip LIGHT")
+        self.custom_skip_light.setChecked(self.settings.get("template_skip_light", "0") == "1")
+        custom_form.addRow("QBSP extra args", self.custom_qbsp_args)
+        custom_form.addRow("VIS extra args", self.custom_vis_args)
+        custom_form.addRow("LIGHT extra args", self.custom_light_args)
+        custom_form.addRow("", self.custom_skip_vis)
+        custom_form.addRow("", self.custom_skip_light)
+        custom_label = QLabel("<b>Custom template args</b> (only used when 'custom' is selected):")
+        layout.addWidget(custom_label)
+        layout.addWidget(custom_group)
+        layout.addStretch(1)
+
+        self.template_selector.currentTextChanged.connect(self._update_template_desc)
+        self._update_template_desc(active)
+        return w
+
+    def _update_template_desc(self, name: str) -> None:
+        for tpl in BUILTIN_TEMPLATES:
+            if tpl.name == name:
+                self.template_desc.setText(tpl.description)
+                return
+        self.template_desc.setText("")
+
+    def _open_download_dialog(self) -> None:
+        if self._tool_download_service is None:
+            return
+        from ui.dialogs.tool_download_dialog import ToolDownloadDialog
+        dlg = ToolDownloadDialog(self._tool_download_service, self)
+        dlg.exec()
 
     def _save(self) -> None:
         self.settings.set("source_root", self.source_root.text())
@@ -182,6 +257,7 @@ class SettingsDialog(QDialog):
         self.settings.set("qbsp_executable", self.qbsp_exe.text())
         self.settings.set("vis_executable", self.vis_exe.text())
         self.settings.set("light_executable", self.light_exe.text())
+        self.settings.set("trenchbroom_exe", self.trenchbroom_exe.text())
 
         self.settings.set("auto_watch", "1" if self.auto_watch.isChecked() else "0")
         self.settings.set("auto_flush", "1" if self.auto_flush.isChecked() else "0")
@@ -189,6 +265,14 @@ class SettingsDialog(QDialog):
         self.settings.set("pack_after_build", "1" if self.pack_after_build.isChecked() else "0")
         self.settings.set("deploy_after_build", "1" if self.deploy_after_build.isChecked() else "0")
         self.settings.set("map_build_mode", self.map_mode.currentText())
+
+        self.settings.set("build_template", self.template_selector.currentText())
+        self.settings.set("template_qbsp_args", self.custom_qbsp_args.text())
+        self.settings.set("template_vis_args", self.custom_vis_args.text())
+        self.settings.set("template_light_args", self.custom_light_args.text())
+        self.settings.set("template_skip_vis", "1" if self.custom_skip_vis.isChecked() else "0")
+        self.settings.set("template_skip_light", "1" if self.custom_skip_light.isChecked() else "0")
+
         self.accept()
 
     def _reset_clean(self) -> None:

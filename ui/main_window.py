@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 import shutil
 
@@ -80,6 +81,7 @@ class MainWindow(QMainWindow):
         watch_service: PollingWatchService,
         preview_service: PreviewService,
         log_service: LogService,
+        tool_download_service=None,
     ) -> None:
         super().__init__()
         self.project_service = project_service
@@ -95,6 +97,7 @@ class MainWindow(QMainWindow):
         self.watch = watch_service
         self.preview = preview_service
         self.logs = log_service
+        self.tool_download = tool_download_service
         self.pak_archive = PakArchive()
         self._pak_tree_model = QStandardItemModel(self)
         self._last_pak_signature: tuple[bool, int, int] | None = None
@@ -115,6 +118,13 @@ class MainWindow(QMainWindow):
         self.source_tree = SourceTreeView()
         self.source_tree.setModel(self.source_model)
         self.source_tree.clicked.connect(self._source_clicked)
+
+        # Connect source tree signals
+        self.source_tree.open_in_trenchbroom.connect(self._open_in_trenchbroom)
+        self.source_tree.compile_map_requested.connect(self._compile_specific_map)
+        self.source_tree.delete_requested.connect(self._delete_path)
+        self.source_tree.rename_requested.connect(self._rename_path)
+        self.source_tree.new_entry_requested.connect(self._create_entry_in)
 
         source_actions = QWidget()
         source_action_layout = QHBoxLayout(source_actions)
@@ -244,8 +254,14 @@ class MainWindow(QMainWindow):
         selected = self._selected_source_path()
         return selected if selected.is_dir() else selected.parent
 
+    # ------------------------------------------------------------------
+    # File operations (from toolbar buttons)
+    # ------------------------------------------------------------------
+
     def _create_source_entry(self) -> None:
-        target_dir = self._target_directory_for_selection()
+        self._create_entry_in(self._target_directory_for_selection())
+
+    def _create_entry_in(self, target_dir: Path) -> None:
         name, ok = QInputDialog.getText(self, "Neu", "Name für neue Datei/Ordner:")
         if not ok or not name.strip():
             return
@@ -265,7 +281,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Neu", f"Konnte Eintrag nicht erstellen:\n{exc}")
 
     def _rename_source_entry(self) -> None:
-        selected = self._selected_source_path()
+        self._rename_path(self._selected_source_path())
+
+    def _rename_path(self, selected: Path) -> None:
         if selected == self.settings.source_root().resolve():
             QMessageBox.information(self, "Edit", "Der Source-Root kann nicht umbenannt werden.")
             return
@@ -285,7 +303,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Edit", f"Konnte Eintrag nicht umbenennen:\n{exc}")
 
     def _delete_source_entry(self) -> None:
-        selected = self._selected_source_path()
+        self._delete_path(self._selected_source_path())
+
+    def _delete_path(self, selected: Path) -> None:
         if selected == self.settings.source_root().resolve():
             QMessageBox.information(self, "Löschen", "Der Source-Root kann nicht gelöscht werden.")
             return
@@ -301,6 +321,42 @@ class MainWindow(QMainWindow):
                 selected.unlink()
         except OSError as exc:
             QMessageBox.warning(self, "Löschen", f"Konnte Eintrag nicht löschen:\n{exc}")
+
+    # ------------------------------------------------------------------
+    # TrenchBroom integration
+    # ------------------------------------------------------------------
+
+    def _open_in_trenchbroom(self, path: Path) -> None:
+        exe = self.settings.get("trenchbroom_exe", "")
+        if not exe:
+            QMessageBox.warning(
+                self,
+                "TrenchBroom",
+                "TrenchBroom is not configured.\n"
+                "Set the path in Settings → Toolchains → TrenchBroom.",
+            )
+            return
+        try:
+            subprocess.Popen([exe, str(path)])
+        except OSError as exc:
+            QMessageBox.warning(self, "TrenchBroom", f"Could not launch TrenchBroom:\n{exc}")
+
+    # ------------------------------------------------------------------
+    # Direct map compilation (from context menu)
+    # ------------------------------------------------------------------
+
+    def _compile_specific_map(self, map_path: Path) -> None:
+        self.build_output.appendPlainText(f"=== Compile {map_path.name} ===")
+        result = self.compiler.compile_map_streaming(map_path, on_line=self._build_line_callback)
+        if result is not None:
+            combined = f"{result.stdout}\n{result.stderr}"
+            self._update_diagnostics_from_output(combined)
+            if result.code != 0:
+                QMessageBox.warning(self, "Compile", f"Compilation failed for {map_path.name}. See Build Output.")
+
+    # ------------------------------------------------------------------
+    # Menu
+    # ------------------------------------------------------------------
 
     def _build_menu(self) -> None:
         menu = self.menuBar().addMenu("Project")
@@ -320,6 +376,17 @@ class MainWindow(QMainWindow):
         build_menu.addSeparator()
         clear_output_action = build_menu.addAction("Clear Build Output")
         clear_output_action.triggered.connect(self.build_output.clear)
+
+        # Build template quick-select sub-menu
+        from core.models.domain import BUILTIN_TEMPLATES
+        template_menu = build_menu.addMenu("Build Template")
+        for tpl in BUILTIN_TEMPLATES:
+            action = template_menu.addAction(f"{tpl.name} – {tpl.description}")
+            action.triggered.connect(lambda checked, t=tpl.name: self._set_build_template(t))
+
+    def _set_build_template(self, template_name: str) -> None:
+        self.settings.set("build_template", template_name)
+        self.status_label.setText(f"Build template: {template_name}")
 
     def _init_timer(self) -> None:
         self.refresh_timer = QTimer(self)
@@ -426,7 +493,7 @@ class MainWindow(QMainWindow):
         self.preview_context.setText(f"Window: {pane_name} | Item: {item_type} | Path: {path.name}")
 
     def open_settings(self) -> None:
-        dialog = SettingsDialog(self.settings, self)
+        dialog = SettingsDialog(self.settings, tool_download_service=self.tool_download, parent=self)
         if dialog.exec():
             self._refresh_tree_roots()
 
@@ -467,7 +534,7 @@ class MainWindow(QMainWindow):
         handler = self.preview.handler_for(file_path)
         widget = handler.create_widget(file_path)
         self._set_preview_widget(widget)
-        # Scroll to the error line if the widget is a text editor
+        # Scroll to the error line if the widget supports it
         if hasattr(widget, "document") and callable(widget.document):
             from PySide6.QtGui import QTextCursor
             doc = widget.document()

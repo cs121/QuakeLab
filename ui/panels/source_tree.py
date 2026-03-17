@@ -3,13 +3,29 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import QMimeData, QPoint, Qt
+from PySide6.QtCore import QMimeData, QPoint, Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
-from PySide6.QtWidgets import QFileSystemModel, QMessageBox, QTreeView
+from PySide6.QtWidgets import (
+    QFileSystemModel,
+    QMenu,
+    QMessageBox,
+    QTreeView,
+)
 
 
 class SourceTreeView(QTreeView):
-    """Tree view for source files with drag & drop support (internal + external)."""
+    """Tree view for source files with drag & drop, context menu, and double-click support."""
+
+    # Emitted when user wants to open a .map file in TrenchBroom
+    open_in_trenchbroom = Signal(Path)
+    # Emitted when user wants to compile a .map file directly
+    compile_map_requested = Signal(Path)
+    # Emitted when user wants to delete a path
+    delete_requested = Signal(Path)
+    # Emitted when user wants to rename a path
+    rename_requested = Signal(Path)
+    # Emitted when user wants to create a new entry inside a directory
+    new_entry_requested = Signal(Path)  # Path is the target directory
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -19,9 +35,78 @@ class SourceTreeView(QTreeView):
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QTreeView.DragDropMode.InternalMove)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
 
     def configure_root(self, source_root: Path) -> None:
         self._source_root = source_root.resolve()
+
+    # ------------------------------------------------------------------
+    # Double-click: open .map files in TrenchBroom
+    # ------------------------------------------------------------------
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        index = self.indexAt(event.position().toPoint())
+        if index.isValid():
+            model = self.model()
+            if isinstance(model, QFileSystemModel):
+                path = Path(model.filePath(index))
+                if path.is_file() and path.suffix.lower() == ".map":
+                    self.open_in_trenchbroom.emit(path)
+                    return
+        super().mouseDoubleClickEvent(event)
+
+    # ------------------------------------------------------------------
+    # Context menu
+    # ------------------------------------------------------------------
+
+    def _show_context_menu(self, pos: QPoint) -> None:
+        index = self.indexAt(pos)
+        model = self.model()
+        if not isinstance(model, QFileSystemModel):
+            return
+
+        path: Path | None = None
+        if index.isValid():
+            path = Path(model.filePath(index))
+
+        menu = QMenu(self)
+
+        if path is not None and path.is_file():
+            # .map-specific actions
+            if path.suffix.lower() == ".map":
+                tb_action = menu.addAction("Open in TrenchBroom")
+                tb_action.triggered.connect(lambda: self.open_in_trenchbroom.emit(path))
+                compile_action = menu.addAction("Compile Map")
+                compile_action.triggered.connect(lambda: self.compile_map_requested.emit(path))
+                menu.addSeparator()
+
+            rename_action = menu.addAction("Rename…")
+            rename_action.triggered.connect(lambda: self.rename_requested.emit(path))
+            delete_action = menu.addAction("Delete")
+            delete_action.triggered.connect(lambda: self.delete_requested.emit(path))
+
+        elif path is not None and path.is_dir():
+            new_action = menu.addAction("New File / Folder…")
+            new_action.triggered.connect(lambda: self.new_entry_requested.emit(path))
+            menu.addSeparator()
+            rename_action = menu.addAction("Rename…")
+            rename_action.triggered.connect(lambda: self.rename_requested.emit(path))
+            if path.resolve() != self._source_root:
+                delete_action = menu.addAction("Delete Folder")
+                delete_action.triggered.connect(lambda: self.delete_requested.emit(path))
+
+        else:
+            # Right-clicked on empty space → root-level new entry
+            new_action = menu.addAction("New File / Folder…")
+            new_action.triggered.connect(lambda: self.new_entry_requested.emit(self._source_root))
+
+        if not menu.isEmpty():
+            menu.exec(self.viewport().mapToGlobal(pos))
+
+    # ------------------------------------------------------------------
+    # Drag & drop
+    # ------------------------------------------------------------------
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if self._has_supported_urls(event.mimeData()):
