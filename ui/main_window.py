@@ -120,8 +120,6 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(200, self._startup_check)
 
     def _build_ui(self) -> None:
-        self._build_menu()
-
         self.source_model = QFileSystemModel(self)
         self.source_model.setReadOnly(False)
         self.source_tree_title = QLabel("Source")
@@ -212,6 +210,8 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self.log_table, "Logs")
         self._errors_tab_idx = self._tabs.addTab(self.error_table, "Errors")
         tabs = self._tabs
+
+        self._build_menu()
 
         self.main_splitter = QSplitter()
         self.main_splitter.setOrientation(Qt.Orientation.Vertical)
