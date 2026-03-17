@@ -89,11 +89,17 @@ class SettingsDialog(QDialog):
         self.deploy_root = QLineEdit(self.settings.get("deploy_root", "deploy"))
         self.pak_output = QLineEdit(self.settings.get("pak_output_path", "build/pak0.pak"))
         self.engine_exe = QLineEdit(self.settings.get("engine_exe", ""))
+        self.engine_args_edit = QLineEdit(self.settings.get("engine_args", ""))
+        self.entity_def_path = QLineEdit(self.settings.get("entity_def_path", ""))
         form.addRow("Source Root", self._with_browse_button(self.source_root, "Select Source Root", directory=True))
         form.addRow("Build Root", self._with_browse_button(self.build_root, "Select Build Root", directory=True))
         form.addRow("Deploy Root", self._with_browse_button(self.deploy_root, "Select Deploy Root", directory=True))
         form.addRow("Pak Output", self._with_browse_button(self.pak_output, "Select Pak Output File"))
         form.addRow("Engine EXE", self._with_browse_button(self.engine_exe, "Select Game Executable"))
+        self.engine_args_edit.setPlaceholderText("e.g. -heapsize 256000 -window")
+        form.addRow("Engine Args", self.engine_args_edit)
+        self.entity_def_path.setPlaceholderText("Path to .def or .fgd file for Entity Browser")
+        form.addRow("Entity Definitions", self._with_browse_button(self.entity_def_path, "Select DEF/FGD File"))
         return w
 
     def _with_status_indicator(self, edit: QLineEdit, title: str, settings_key: str, label: str) -> QWidget:
@@ -138,13 +144,22 @@ class SettingsDialog(QDialog):
         self.qc_exe = QLineEdit(self.settings.get("qc_executable", ""))
         self.qc_args = QLineEdit(self.settings.get("qc_args", ""))
         self.qbsp_exe = QLineEdit(self.settings.get("qbsp_executable", ""))
+        self.qbsp_args = QLineEdit(self.settings.get("qbsp_args", ""))
         self.vis_exe = QLineEdit(self.settings.get("vis_executable", ""))
+        self.vis_args = QLineEdit(self.settings.get("vis_args", ""))
         self.light_exe = QLineEdit(self.settings.get("light_executable", ""))
+        self.light_args = QLineEdit(self.settings.get("light_args", ""))
         form.addRow("QC Compiler", self._with_status_indicator(self.qc_exe, "Select QC Compiler", "qc_executable", "QC Compiler"))
         form.addRow("QC Args", self.qc_args)
         form.addRow("QBSP", self._with_status_indicator(self.qbsp_exe, "Select QBSP Executable", "qbsp_executable", "QBSP"))
+        self.qbsp_args.setPlaceholderText("e.g. -leak -oldaxis")
+        form.addRow("QBSP Args", self.qbsp_args)
         form.addRow("VIS", self._with_status_indicator(self.vis_exe, "Select VIS Executable", "vis_executable", "VIS"))
+        self.vis_args.setPlaceholderText("e.g. -fast")
+        form.addRow("VIS Args", self.vis_args)
         form.addRow("LIGHT", self._with_status_indicator(self.light_exe, "Select LIGHT Executable", "light_executable", "LIGHT"))
+        self.light_args.setPlaceholderText("e.g. -extra -extra4")
+        form.addRow("LIGHT Args", self.light_args)
         layout.addLayout(form)
 
         auto_detect_btn = QPushButton("Auto-Detect All")
@@ -246,6 +261,9 @@ class SettingsDialog(QDialog):
         if not profile:
             return
         self.qc_args.setText(profile.qc_args)
+        self.qbsp_args.setText(profile.qbsp_args)
+        self.vis_args.setText(profile.vis_args)
+        self.light_args.setText(profile.light_args)
         self.map_mode.setCurrentText(profile.map_build_mode)
 
     def _save_as_profile(self) -> None:
@@ -260,9 +278,9 @@ class SettingsDialog(QDialog):
             id=0,
             name=name.strip(),
             qc_args=self.qc_args.text(),
-            qbsp_args="",
-            vis_args="",
-            light_args="",
+            qbsp_args=self.qbsp_args.text(),
+            vis_args=self.vis_args.text(),
+            light_args=self.light_args.text(),
             map_build_mode=self.map_mode.currentText(),
         )
         self._profile_service.save_profile(profile)
@@ -275,12 +293,17 @@ class SettingsDialog(QDialog):
         self.settings.set("deploy_root", self.deploy_root.text())
         self.settings.set("pak_output_path", self.pak_output.text())
         self.settings.set("engine_exe", self.engine_exe.text())
+        self.settings.set("engine_args", self.engine_args_edit.text())
+        self.settings.set("entity_def_path", self.entity_def_path.text())
 
         self.settings.set("qc_executable", self.qc_exe.text())
         self.settings.set("qc_args", self.qc_args.text())
         self.settings.set("qbsp_executable", self.qbsp_exe.text())
+        self.settings.set("qbsp_args", self.qbsp_args.text())
         self.settings.set("vis_executable", self.vis_exe.text())
+        self.settings.set("vis_args", self.vis_args.text())
         self.settings.set("light_executable", self.light_exe.text())
+        self.settings.set("light_args", self.light_args.text())
 
         self.settings.set("auto_watch", "1" if self.auto_watch.isChecked() else "0")
         self.settings.set("auto_flush", "1" if self.auto_flush.isChecked() else "0")
@@ -288,6 +311,8 @@ class SettingsDialog(QDialog):
         self.settings.set("pack_after_build", "1" if self.pack_after_build.isChecked() else "0")
         self.settings.set("deploy_after_build", "1" if self.deploy_after_build.isChecked() else "0")
         self.settings.set("map_build_mode", self.map_mode.currentText())
+        if self._profile_combo:
+            self.settings.set("active_build_profile", self._profile_combo.currentText())
         self.accept()
 
     def _reset_clean(self) -> None:

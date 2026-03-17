@@ -245,8 +245,11 @@ class MainWindow(QMainWindow):
             status.addPermanentWidget(lbl)
             self._tool_status_labels[tool_key] = lbl
 
-        self._profile_label = QLabel("")
-        self._profile_label.setStyleSheet("font-size: 10px; color: #90CAF9;")
+        self._profile_label = QPushButton("")
+        self._profile_label.setFlat(True)
+        self._profile_label.setStyleSheet("font-size: 10px; color: #90CAF9; border: none; padding: 0 4px;")
+        self._profile_label.setToolTip("Click to switch build profile")
+        self._profile_label.clicked.connect(self._show_profile_popup)
         status.addPermanentWidget(self._profile_label)
         self._refresh_profile_label()
 
@@ -258,7 +261,7 @@ class MainWindow(QMainWindow):
 
         play_btn = QPushButton("▶ Play")
         play_btn.clicked.connect(self._launch_game)
-        play_btn.setToolTip("Launch game engine (F5)")
+        play_btn.setToolTip("Launch game engine (F6)")
         status.addPermanentWidget(play_btn)
         self.setStatusBar(status)
 
@@ -362,6 +365,9 @@ class MainWindow(QMainWindow):
         batch_map_action = build_menu.addAction("Compile All Maps (Batch)")
         batch_map_action.triggered.connect(self._compile_all_maps)
         build_menu.addSeparator()
+        self._profile_menu = build_menu.addMenu("Switch Profile")
+        self._rebuild_profile_menu()
+        build_menu.addSeparator()
         play_action = build_menu.addAction("Play\tF6")
         play_action.triggered.connect(self._launch_game)
         build_menu.addSeparator()
@@ -374,6 +380,14 @@ class MainWindow(QMainWindow):
         tools_menu = self.menuBar().addMenu("Tools")
         entity_browser_action = tools_menu.addAction("Entity Browser\tCtrl+E")
         entity_browser_action.triggered.connect(self._show_entity_browser)
+        tools_menu.addSeparator()
+        validate_shaders_action = tools_menu.addAction("Validate All Shaders")
+        validate_shaders_action.triggered.connect(self._validate_all_shaders)
+        validate_maps_action = tools_menu.addAction("Validate All Map Entities")
+        validate_maps_action.triggered.connect(self._validate_all_maps)
+        tools_menu.addSeparator()
+        auto_detect_action = tools_menu.addAction("Auto-Detect Tools")
+        auto_detect_action.triggered.connect(self._auto_detect_tools)
 
     def _init_timer(self) -> None:
         self.refresh_timer = QTimer(self)
@@ -603,7 +617,12 @@ class MainWindow(QMainWindow):
 
         menu = QMenu(self)
 
-        if path.is_file():
+        if path.is_dir():
+            # Capture path for lambdas
+            dir_path = path
+            batch_act = menu.addAction("Compile All Maps in Folder")
+            batch_act.triggered.connect(lambda: self._compile_maps_in_folder(dir_path))
+        elif path.is_file():
             if suffix in {".qc", ".src"}:
                 act = menu.addAction("Compile QC")
                 act.triggered.connect(
@@ -638,6 +657,11 @@ class MainWindow(QMainWindow):
                 pts_act = menu.addAction("View Leak Path")
                 pts_act.triggered.connect(
                     lambda: self._source_clicked(index)
+                )
+            elif suffix in {".def", ".fgd"}:
+                browse_ent_act = menu.addAction("Browse Entities")
+                browse_ent_act.triggered.connect(
+                    lambda: self._show_entity_browser_for(path)
                 )
 
         menu.addSeparator()
@@ -723,9 +747,40 @@ class MainWindow(QMainWindow):
                 f"Warning: tools not configured: {tools_str} — open Settings to fix", 8000
             )
 
+    def _rebuild_profile_menu(self) -> None:
+        """Populate the Build > Switch Profile submenu with available profiles."""
+        self._profile_menu.clear()
+        active = self.settings.get("active_build_profile", "")
+        for profile in self.build_profiles.list_profiles():
+            action = self._profile_menu.addAction(profile.name)
+            action.setCheckable(True)
+            action.setChecked(profile.name == active)
+            # Capture name in default arg to avoid late-binding issue
+            action.triggered.connect(lambda _checked, n=profile.name: self._switch_profile(n))
+
+    def _switch_profile(self, name: str) -> None:
+        profile = self.build_profiles.get_profile(name)
+        if not profile:
+            return
+        self.build_profiles.apply_profile(profile, self.settings)
+        self._refresh_profile_label()
+        self._rebuild_profile_menu()
+        self.statusBar().showMessage(f"Switched to profile: {name}", 3000)
+
+    def _show_profile_popup(self) -> None:
+        """Show a popup menu at the profile label to quickly switch profiles."""
+        menu = QMenu(self)
+        active = self.settings.get("active_build_profile", "")
+        for profile in self.build_profiles.list_profiles():
+            action = menu.addAction(profile.name)
+            action.setCheckable(True)
+            action.setChecked(profile.name == active)
+            action.triggered.connect(lambda _checked, n=profile.name: self._switch_profile(n))
+        menu.exec(self._profile_label.mapToGlobal(self._profile_label.rect().topLeft()))
+
     def _refresh_profile_label(self) -> None:
         name = self.settings.get("active_build_profile", "")
-        self._profile_label.setText(f"Profile: {name}" if name else "")
+        self._profile_label.setText(f"Profile: {name}" if name else "Profile: (none)")
 
     def _update_errors_tab_title(self) -> None:
         count = len(self._diagnostics)
@@ -801,10 +856,99 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "Release", "Failed to create release. See Logs.")
 
+    def _compile_maps_in_folder(self, folder: Path) -> None:
+        map_files = sorted(folder.rglob("*.map"))
+        if not map_files:
+            self.statusBar().showMessage(f"No .map files found in {folder.name}", 3000)
+            return
+        self._tabs.setCurrentIndex(self._build_output_tab_idx)
+        self.build_output.appendPlainText(f"=== Compile Maps in: {folder.name} ({len(map_files)} files) ===")
+        results: list[tuple[str, bool]] = []
+        for mf in map_files:
+            self._build_line_callback("stdout", f"--- Compiling: {mf.name} ---")
+            result = self.compiler.compile_map_streaming(mf, on_line=self._build_line_callback)
+            ok = result is not None and result.code == 0
+            results.append((mf.name, ok))
+        failed = [n for n, ok in results if not ok]
+        ok_count = len(results) - len(failed)
+        self.build_output.appendPlainText(f"\n[BATCH] {ok_count}/{len(results)} maps compiled successfully.")
+        if failed:
+            self.build_output.appendPlainText(f"[BATCH] Failed: {', '.join(failed)}")
+
     def _show_entity_browser(self) -> None:
         entity_path = self.settings.get("entity_def_path", "")
         dialog = EntityBrowserDialog(entity_path, self)
         dialog.exec()
+
+    def _show_entity_browser_for(self, path: Path) -> None:
+        dialog = EntityBrowserDialog(str(path), self)
+        dialog.exec()
+
+    def _validate_all_shaders(self) -> None:
+        source_root = self.settings.source_root()
+        shader_files = sorted(source_root.rglob("*.shader"))
+        if not shader_files:
+            self.statusBar().showMessage("No .shader files found.", 3000)
+            return
+        all_diags = []
+        for sf in shader_files:
+            diags = self.validation.validate_shader_file(sf)
+            all_diags.extend(diags)
+        if all_diags:
+            self._diagnostics = [
+                CompilerDiagnostic(d.file_path, d.line, None, d.severity, d.message)
+                for d in all_diags
+            ]
+            self._fill_diagnostics_table()
+            self._update_errors_tab_title()
+            self._tabs.setCurrentIndex(self._errors_tab_idx)
+            self.statusBar().showMessage(
+                f"Validated {len(shader_files)} shader(s): {len(all_diags)} issue(s)", 5000
+            )
+        else:
+            self.statusBar().showMessage(f"Validated {len(shader_files)} shader(s): no issues found", 5000)
+
+    def _validate_all_maps(self) -> None:
+        source_root = self.settings.source_root()
+        map_files = sorted(source_root.rglob("*.map"))
+        if not map_files:
+            self.statusBar().showMessage("No .map files found.", 3000)
+            return
+        all_diags = []
+        for mf in map_files:
+            diags = self.validation.validate_map_entities(mf)
+            all_diags.extend(diags)
+        if all_diags:
+            self._diagnostics = [
+                CompilerDiagnostic(d.file_path, d.line, None, d.severity, d.message)
+                for d in all_diags
+            ]
+            self._fill_diagnostics_table()
+            self._update_errors_tab_title()
+            self._tabs.setCurrentIndex(self._errors_tab_idx)
+            self.statusBar().showMessage(
+                f"Validated {len(map_files)} map(s): {len(all_diags)} issue(s)", 5000
+            )
+        else:
+            self.statusBar().showMessage(f"Validated {len(map_files)} map(s): no issues found", 5000)
+
+    def _auto_detect_tools(self) -> None:
+        from core.services.toolchain_check_service import ToolchainCheckService
+        checker = ToolchainCheckService(self.settings)
+        found = checker.auto_detect_tools()
+        if not found:
+            self.statusBar().showMessage("Auto-detect: no tools found on this system.", 5000)
+            return
+        applied = []
+        for key, path in found.items():
+            if not self.settings.get(key, ""):
+                self.settings.set(key, path)
+                applied.append(key)
+        self._refresh_toolchain_status()
+        if applied:
+            self.statusBar().showMessage(f"Auto-detected {len(applied)} tool(s): {', '.join(applied)}", 5000)
+        else:
+            self.statusBar().showMessage("All tool paths already set.", 3000)
 
     def _launch_game(self) -> None:
         exe = self.settings.get("engine_exe", "")
