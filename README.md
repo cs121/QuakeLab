@@ -1,160 +1,212 @@
-# QuakeLab Workbench V1
+# QuakeLab Workbench
 
-QuakeLab ist eine modulare Python-Desktop-Anwendung (PySide6) für Quake-Modding-Workflows mit Source-Watching, Change-Journal, Build-Queue, Toolchain-Integration und PAK-Rebuild.
+A modular Python desktop application (PySide6) for Quake modding workflows — source watching, change journal, build queue, full toolchain integration, PAK rebuild, and rich asset previews.
 
-## Voraussetzungen
+---
+
+## Requirements
 
 - Python **3.11+**
-- Betriebssystem: Linux, macOS oder Windows
-- Für EXE-Build: Windows + PyInstaller
+- OS: Linux, macOS, or Windows
+- For EXE packaging: Windows + PyInstaller
 
-## Benötigte Python-Libraries
-
-Pflichtabhängigkeiten:
-
-- `PySide6` (GUI, Multimedia, Datei-Modelle)
-
-Für Entwicklung und Tests empfohlen:
-
-- `pytest`
-- `pyinstaller` (nur für EXE-Erzeugung)
-
-Installation (Beispiel mit virtueller Umgebung):
+## Installation
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install PySide6 pytest pyinstaller
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
+pip install PySide6
+# optional: pip install pytest pyinstaller
 ```
 
-## Anwendung starten
-
-Projektwurzel öffnen und starten:
+## Running
 
 ```bash
 python -m app.main
 ```
 
-Beim ersten Start werden automatisch Standardordner (`src`, `build`) und die SQLite-Datenbank unter `.quakelab/quakelab.db` angelegt.
+On first launch, QuakeLab automatically creates the default folders (`src/`, `build/`) and the SQLite database at `.quakelab/quakelab.db`.
 
-## Bedienung (Kurz-Anleitung)
+---
 
-1. **Starten** mit `python -m app.main`.
-2. Über **Project → Settings** die Pfade setzen:
-   - Source Root
-   - Build Root
-   - Deploy Root
-   - Pak Output
-3. In **Project → Settings** die Toolchain konfigurieren:
-   - QC Compiler (Executable + optionale Argumente)
-   - QBSP / VIS / LIGHT (optional)
-4. Dateien im `src/`-Ordner bearbeiten/ablegen.
-5. Das Tool erkennt Änderungen automatisch und legt Build-Aktionen in der Queue an.
-6. Unten rechts **Flush Build Queue** klicken (oder Auto-Flush nutzen), um die Aktionen abzuarbeiten.
-7. Ergebnisse prüfen:
-   - **Build Queue**-Tab für Status
-   - **Logs**-Tab für Ausgaben
-   - **Errors**-Tab bei Fehlern
-   - **Preview** rechts für selektierte Dateien
+## Quick-Start
 
-## EXE erstellen (Windows)
+1. **Launch** `python -m app.main`.
+2. Open **Project → Settings** and configure paths:
+   - Source Root, Build Root, Deploy Root, PAK Output
+   - Engine executable
+3. In **Settings → Toolchains** set up the compiler paths:
+   - QC Compiler, QBSP, VIS, LIGHT, TrenchBroom
+4. Drop / edit files in the `src/` folder.
+5. QuakeLab detects changes and enqueues build actions automatically.
+6. Click **Flush Build Queue** (status bar) or let Auto-Flush fire periodically.
+7. Check results in the bottom tabs: Change Journal · Build Queue · Build Output · Logs · Errors.
 
-Im Hauptordner liegt das Script `build_exe.bat`.
+---
 
-Ausführen in einer aktiven Python-Umgebung:
+## Features
+
+### File Browser & Editor
+- **Source Tree** (left panel) — full file system view of the source root with drag-and-drop support.
+- **Editable preview** — clicking any text-format file (`.qc`, `.map`, `.cfg`, `.shader`, `.md`, `.ent`, …) opens it in an inline editor with a **Save** button and unsaved-changes indicator.
+- **QuakeC syntax highlighting** — `.qc` / `.qh` files get full syntax colouring: types, control flow, built-in functions, string literals, numbers, single- and block-comments, preprocessor directives.
+- **GLSL syntax highlighting** — `.glsl` / `.vert` / `.frag` files.
+
+### Context Menus
+Right-click any file or folder in the Source Tree:
+
+| Context | Actions |
+|---------|---------|
+| `.map` file | Open in TrenchBroom · Compile Map · Rename · Delete |
+| Any file | Rename · Delete |
+| Folder | New File/Folder · Rename · Delete |
+| Empty space | New File/Folder |
+
+### TrenchBroom Integration
+- **Double-click** a `.map` file to open it in TrenchBroom.
+- Configure the TrenchBroom executable in **Settings → Toolchains → TrenchBroom**.
+
+### Build Templates
+Five preset compilation profiles selectable from **Build → Build Template** or **Settings → Build Templates**:
+
+| Template | Pipeline | Use case |
+|----------|----------|----------|
+| **preview** | QBSP only | Instant preview, no lighting |
+| **fast** | QBSP + VIS `-fast` | Quick iteration |
+| **normal** | QBSP + VIS + LIGHT | Standard release quality |
+| **high** | QBSP + VIS `-level 4` + LIGHT `-extra4 -soft` | Final high-quality build |
+| **custom** | Configurable args | Full control |
+
+### Asset Previews
+
+| Extension | Viewer |
+|-----------|--------|
+| `.bsp` | Summary, Entities, Textures tabs |
+| `.wad` (WAD2/WAD3) | Directory listing + per-texture MIPTEX/QPic preview |
+| `.mdl` (IDPO v6) | Metadata summary + first skin texture |
+| `.spr` (IDSP v1) | Metadata summary + frame-by-frame preview |
+| `.lmp` | Palette-indexed image; 768-byte files show 256-colour swatch grid |
+| `.dem` | Demo format detection + message block statistics |
+| `.png` `.jpg` `.tga` `.bmp` | Scrollable image with dimensions |
+| `.wav` | Audio player (play/stop) + metadata |
+| `.glsl` `.vert` `.frag` | Syntax-highlighted read view |
+| `.qc` `.qh` `.map` `.cfg` `.shader` `.md` `.ent` `.txt` | Editable text with syntax highlighting |
+| Everything else | Hex/text fallback |
+
+All palette-indexed formats (WAD, MDL, SPR, LMP) automatically load `gfx/palette.lmp` from your source root for accurate Quake colours, falling back to a built-in colour cube.
+
+### Automatic Tool Download
+**Settings → Toolchains → Download Tools…** downloads and installs tools directly into the `toolchain/` folder and auto-configures all settings paths:
+
+- **ericw-tools** — QBSP / VIS / LIGHT (fetches latest GitHub release)
+- **TrenchBroom** — map editor (fetches latest GitHub release)
+
+An *Install from Archive* option accepts a locally downloaded zip/tar.gz.
+
+### QuakeC Source Code
+**Project → QuakeC Source…** downloads QuakeC source code into your source root:
+
+| Source | Description |
+|--------|-------------|
+| **id Software Quake QC** | Original GPL progs source (id-Software/Quake on GitHub) |
+| **Copper QC** | Modern vanilla-compatible mod base by Lunaran |
+| **Quake Remastered QC** | Community adaptation for the 2021 Nightdive remaster |
+
+Each entry shows a progress bar, extracts `.qc` files into a named subfolder, and has an in-app README viewer.
+
+### Build Pipeline
+- **Source watching** — background polling with SHA1-based change detection and 0.7 s debounce.
+- **Change Journal** — every detected file change is logged to SQLite.
+- **Build Queue** — rule-based action resolver maps file changes to `compile_qc`, `compile_map`, `pack_asset`, `remove_asset`, `rebuild_pak`.
+- **Streaming output** — live QBSP/VIS/LIGHT output appears line-by-line in the Build Output tab.
+- **Compiler diagnostics** — errors parsed from build output; double-click an error to jump to the line in the editor.
+- **PAK rebuild** — atomic write-then-swap ensures the output PAK is never left in a partial state.
+- **Auto-flush** — configurable timer fires the build queue periodically (default 3 min).
+- **Deploy** — optional post-build copy of the PAK to a game directory.
+
+### Project Panel (Build/PAK Tree)
+Displays the contents of the output PAK file in a hierarchical tree, auto-refreshed whenever the PAK changes.
+
+### Settings
+- Import / Export all settings as JSON.
+- Per-tool live validation indicators (green OK / red ✗).
+- Reset workspace — rebuilds the database and cleans src/build/deploy.
+
+---
+
+## Architecture
+
+```
+app/                    Bootstrap, dependency wiring, entry point
+core/
+  models/               Domain dataclasses (BuildAction, BuildTemplate, …)
+  rules/                Build-action resolution rules
+  services/             Business logic (no GUI imports):
+                          compiler, pack, deploy, launch, rebuild,
+                          preview, settings, log, build-queue,
+                          change-journal, tool-download, validation
+infrastructure/
+  archives/pak.py       Quake PAK read/write
+  db/database.py        SQLite (settings, journal, queue, logs)
+  filesystem/watcher.py Polling file watcher
+  formats/
+    bsp.py              BSP lump parser
+    wad.py              WAD2/WAD3 parser
+    mdl.py              MDL (IDPO v6) parser
+    spr.py              SPR (IDSP v1) parser
+    palette.py          Shared palette loader
+  process/              Blocking + streaming subprocess runners
+ui/
+  dialogs/              Settings, tool download, QC source download
+  panels/               Source tree view (drag-drop, context menu)
+  syntax/               QcHighlighter, GlslHighlighter
+  viewers/              BSP, WAD, MDL, SPR, LMP, DEM, image, WAV,
+                        text (editable), GLSL, fallback
+  main_window.py        Main window, layout, signal wiring
+tests/
+```
+
+### Layer rules
+- **Core** and **Infrastructure** have zero Qt/GUI imports — fully testable in isolation.
+- **UI** layer wires everything together via signals and service calls.
+- All services are injected via `app/bootstrap.py`.
+
+---
+
+## Typical Source Layout
+
+```
+src/
+  qc/           QuakeC source (.qc, .qh)
+  maps/         Map files (.map)
+  textures/     WAD files, LMP textures
+  sounds/       WAV files
+  models/       MDL models, SPR sprites
+  gfx/          palette.lmp, status-bar graphics
+  music/
+build/
+  pak0.pak
+toolchain/
+  ericw-tools/  qbsp, vis, light
+  trenchbroom/  TrenchBroom
+```
+
+---
+
+## Windows EXE
 
 ```bat
 build_exe.bat
 ```
 
-Ergebnis:
+Output: `dist\QuakeLab.exe`
 
-- EXE-Datei unter `dist\`
-- Startdatei: `dist\QuakeLab.exe`
+---
 
-## Features (V1)
+## Roadmap
 
-- Modulares GUI-Layout mit:
-  - Source Tree (links oben)
-  - Build/PAK Tree (links unten)
-  - Preview-Bereich (rechts)
-  - Tabs: Change Journal, Build Queue, Logs, Errors (unten)
-- Source-Hot-Path Monitoring mit Debounce und Deduplizierung.
-- Persistenter Change-Journal und Build-Queue in SQLite (`.quakelab/quakelab.db`).
-- Regelbasierte Build-Aktionen (`compile_qc`, `compile_map`, `pack_asset`, `remove_asset`, `rebuild_pak`).
-- QuakeC-/Map-Toolchain-Integration via konfigurierbare externe Prozesse.
-- Periodischer oder manueller Queue-Flush inkl. atomischem PAK-Rebuild.
-- Preview-Handler-System:
-  - Bilder (`png/jpg/jpeg/tga/bmp`)
-  - WAV inkl. Play/Stop und Metadaten
-  - GLSL mit Syntax-Highlighting
-  - Allgemeine Textformate
-  - Fallback-Viewer
-- JSON Export/Import für Settings.
-
-## Architekturüberblick
-
-```text
-app/
-  main.py
-  bootstrap.py
-core/
-  models/
-  rules/
-  services/
-infrastructure/
-  archives/
-  db/
-  filesystem/
-  process/
-ui/
-  dialogs/
-  viewers/
-  syntax/
-  main_window.py
-examples/
-  project_config.example.json
-tests/
-```
-
-### Schichten
-
-- **App-Layer**: Bootstrap, Dependency-Wiring, App-Start.
-- **Core-Layer**: Domänenmodelle, Regeln, Services ohne GUI-Logik.
-- **Infrastructure-Layer**: SQLite, Watcher, Hashing, Prozessausführung, PAK-Implementierung.
-- **UI-Layer**: MainWindow, Dialoge, Preview-Widgets.
-
-## Typische Projektstruktur
-
-```text
-src/
-  qc/
-  maps/
-  textures/
-  sounds/
-  music/
-  shaders/
-  glsl/
-build/
-  pak0.pak
-```
-
-## JSON Import/Export
-
-Im Settings-Dialog:
-
-- `Export JSON`: schreibt portable Konfiguration.
-- `Import JSON`: lädt Konfiguration wieder ein.
-
-Beispiel: `examples/project_config.example.json`
-
-## Hinweise zu V1-Scope
-
-Nicht enthalten in V1:
-
-- Plugin-System
-- Multi-PAK Overlay
-- Erweiterte Dependency-Engine
-- Vollständige Diff-/Undo-Pipelines
-
-Die Architektur ist dafür vorbereitet (Handler-/Service-basierter Schnitt).
+- Plugin / extension system
+- Multi-PAK overlay support
+- Full dependency graph (incremental rebuilds)
+- MDL / SPR frame animation playback
+- Quake palette editor
